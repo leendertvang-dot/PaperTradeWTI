@@ -17,6 +17,11 @@ js = (ROOT / 'app.js').read_text()
 model = (ROOT / 'hormuz-signal.js').read_text()
 html = (ROOT / 'index.html').read_text()
 assert 'Start Paper Trading' in html
+assert 'id="pencil-cursor"' in html and 'id="chart-pencil-live"' in html, 'Live pencil trace must remain in the page'
+assert 'id="input-hormuz"' in html and 'id="input-bid-offset"' in html, 'Live input decomposition required'
+assert "writeLive('quote-bid'" in js and "writeLive('quote-ask'" in js, 'Quote updates must be visibly animated'
+assert "coin: 'para:10Y'" in js, 'Public 10Y reference panel must be present'
+
 assert "wss://api.hyperliquid.xyz/ws" in js
 assert "https://api.hyperliquid.xyz/info" in js
 assert "https://gamma-api.polymarket.com" in model
@@ -26,7 +31,6 @@ assert 'readyToTrade()' in js and 'polyReady()' in js
 assert 'xyz:CL' in js
 assert re.search(r"function executePaper\(", js), 'Paper fills must be simulated locally'
 for path in ROOT.rglob('*'):
-    
     if not path.is_file() or path.relative_to(ROOT).parts[0] in ('.git', 'dist', 'data') or '__pycache__' in path.relative_to(ROOT).parts: continue
     if path.suffix not in ['.html', '.js', '.cjs', '.css', '.md', '.svg', '.py', '.yml', '.webp', ''] and path.name not in ['.gitignore', '.nojekyll', 'LICENSE']:
         raise AssertionError('Unexpected file extension: ' + str(path))
