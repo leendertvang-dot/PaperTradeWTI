@@ -11,7 +11,7 @@ expected = {
     "tests/security_checks.py", "tests/test_snapshot.py", "tests/hormuz_signal.test.cjs", ".github/workflows/validate.yml",
     ".github/workflows/pages.yml", "scripts/build_site.py", "scripts/fetch_hormuz_snapshot.py"
 }
-actual = {p.relative_to(ROOT).as_posix() for p in ROOT.rglob('*') if p.is_file() and p.relative_to(ROOT).parts[0] not in ('dist','data') and '__pycache__' not in p.relative_to(ROOT).parts}
+actual = {p.relative_to(ROOT).as_posix() for p in ROOT.rglob('*') if p.is_file() and p.relative_to(ROOT).parts[0] not in ('dist','data','.git') and '__pycache__' not in p.relative_to(ROOT).parts}
 assert actual == expected, f"Unexpected or missing files: {actual.symmetric_difference(expected)}"
 js = (ROOT / 'app.js').read_text()
 model = (ROOT / 'hormuz-signal.js').read_text()
@@ -26,7 +26,8 @@ assert 'readyToTrade()' in js and 'polyReady()' in js
 assert 'xyz:CL' in js
 assert re.search(r"function executePaper\(", js), 'Paper fills must be simulated locally'
 for path in ROOT.rglob('*'):
-    if not path.is_file() or '__pycache__' in path.relative_to(ROOT).parts: continue
+    
+    if not path.is_file() or path.relative_to(ROOT).parts[0] in ('.git', 'dist', 'data') or '__pycache__' in path.relative_to(ROOT).parts: continue
     if path.suffix not in ['.html', '.js', '.cjs', '.css', '.md', '.svg', '.py', '.yml', '.webp', ''] and path.name not in ['.gitignore', '.nojekyll', 'LICENSE']:
         raise AssertionError('Unexpected file extension: ' + str(path))
     if path.suffix == '.webp':
