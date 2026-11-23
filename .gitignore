@@ -1,0 +1,28 @@
+# Never commit private keys, credentials, local histories or environments.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.sqlite*
+*.db
+__pycache__/
+.venv/
+venv/
+node_modules/
+.DS_Store
+*.log
+*.bak
+*~
+
+# Local test/browser artifacts
+__pycache__/
+.pytest_cache/
+test-results/
+playwright-report/
+*.zip
+# Generated from public market data during the GitHub Pages workflow
+dist/
+data/
