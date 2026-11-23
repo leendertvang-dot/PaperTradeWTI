@@ -33,6 +33,57 @@
       score: NaN, delta: NaN, identity: '', observations: [], source: '', mode: '', sourceAt: 0 }
   };
   let toastTimer;
+  // Accessibility-friendly, data-driven change highlights. Never animate fake data.
+  const previousLiveValues = new Map();
+  function writeLive(id, content, numeric = NaN) {
+    const el = $(id);
+    if (!el) return;
+    const value = String(content);
+    if (el.textContent === value) return;
+    const previous = previousLiveValues.get(id);
+    el.textContent = value;
+    el.classList.remove('value-flash-up', 'value-flash-down', 'value-flash-neutral');
+    if (previous && Number.isFinite(previous.value) && Number.isFinite(numeric) && Math.abs(numeric - previous.value) > 1e-12) {
+      // Reset the animation when successive genuine ticks arrive.
+      void el.offsetWidth;
+      el.classList.add(numeric > previous.value ? 'value-flash-up' : 'value-flash-down');
+    } else if (previous && previous.text !== value) {
+      void el.offsetWidth;
+      el.classList.add('value-flash-neutral');
+    }
+    previousLiveValues.set(id, { text: value, value: numeric });
+  }
+  function renderLiveInputBoard() {
+    const mid = bookMid();
+    const spread = s.bestAsk - s.bestBid;
+    const bids = (s.orderbook[0] || []).slice(0, 5), asks = (s.orderbook[1] || []).slice(0, 5);
+    const bq = bids.reduce((sum, l) => sum + (nnum(l.sz) || 0), 0);
+    const aq = asks.reduce((sum, l) => sum + (nnum(l.sz) || 0), 0);
+    const imbalance = bq + aq > 0 ? (bq - aq) / (bq + aq) : NaN;
+    writeLive('input-best-bid', Number.isFinite(s.bestBid) ? '$' + fmt(s.bestBid, 3) : '—', s.bestBid);
+    writeLive('input-best-ask', Number.isFinite(s.bestAsk) ? '$' + fmt(s.bestAsk, 3) : '—', s.bestAsk);
+    writeLive('input-spread', Number.isFinite(spread) && spread >= 0 ? '$' + fmt(spread, 3) : '—', spread);
+    writeLive('input-obi', Number.isFinite(imbalance) ? fmt(imbalance * 100, 1) + '%' : '—', imbalance);
+    const validPoly = polyReady();
+    writeLive('input-hormuz', validPoly ? fmt(s.poly.composite * 100, 2) + '%' : '—', validPoly ? s.poly.composite : NaN);
+    writeLive('input-delta', validPoly && Number.isFinite(s.poly.delta) ? (s.poly.delta >= 0 ? '+' : '') + fmt(s.poly.delta * 100, 2) + ' pp' : '—', validPoly ? s.poly.delta : NaN);
+    writeLive('input-score', validPoly ? (s.poly.score >= 0 ? '+' : '') + fmt(s.poly.score, 3) : '—', validPoly ? s.poly.score : NaN);
+    writeLive('input-inventory', fmt(s.paper.position, 3) + ' CL', s.paper.position);
+    const tilt = validPoly ? HORMUZ.quoteTilt(s.poly.score, s.settings.notional, s.settings.offset) : null;
+    const bidNotional = s.quoteQtyBid > 0 && Number.isFinite(s.quoteBid) ? s.quoteQtyBid * s.quoteBid : NaN;
+    const askNotional = s.quoteQtyAsk > 0 && Number.isFinite(s.quoteAsk) ? s.quoteQtyAsk * s.quoteAsk : NaN;
+    writeLive('input-bid-offset', tilt ? fmt(tilt.bidOffsetBps, 2) : '—', tilt?.bidOffsetBps);
+    writeLive('input-ask-offset', tilt ? fmt(tilt.askOffsetBps, 2) : '—', tilt?.askOffsetBps);
+    writeLive('input-bid-notional', Number.isFinite(bidNotional) ? dollars(bidNotional) : '—', bidNotional);
+    writeLive('input-ask-notional', Number.isFinite(askNotional) ? dollars(askNotional) : '—', askNotional);
+    writeLive('quote-step-prob', validPoly ? fmt(s.poly.composite * 100, 1) + '%' : '—', validPoly ? s.poly.composite : NaN);
+    writeLive('quote-step-score', validPoly ? (s.poly.score >= 0 ? '+' : '') + fmt(s.poly.score, 3) : '—', validPoly ? s.poly.score : NaN);
+    writeLive('quote-step-bid-offset', tilt ? fmt(tilt.bidOffsetBps, 2) + ' bps' : '—', tilt?.bidOffsetBps);
+    writeLive('quote-step-ask-offset', tilt ? fmt(tilt.askOffsetBps, 2) + ' bps' : '—', tilt?.askOffsetBps);
+    $('flow-feed-stamp').textContent = marketReady() && validPoly ? 'Both feeds current · ' + utc(Date.now()) + ' UTC' : 'Awaiting valid market feeds';
+    $('quote-last-updated').textContent = s.running && readyToTrade() && s.quoteActivatedAt ?
+      'updated ' + fmt((Date.now() - s.quoteActivatedAt) / 1000, 1) + 's ago' : 'Start paper trading to post virtual quotes';
+  }
 
   function toast(message) {
     $('toast').textContent = message;
@@ -134,10 +185,11 @@
     // prints from before it was displayed cannot fill it (no look-ahead).
     const latest = [s.quoteBid, s.quoteAsk, s.quoteQtyBid, s.quoteQtyAsk];
     if (prior.some((v, i) => !Object.is(v, latest[i]))) s.quoteActivatedAt = Date.now();
-    $('quote-bid').textContent = s.quoteQtyBid > .000001 ? '$' + fmt(s.quoteBid, 3) : '—';
-    $('quote-ask').textContent = s.quoteQtyAsk > .000001 ? '$' + fmt(s.quoteAsk, 3) : '—';
+    writeLive('quote-bid', s.quoteQtyBid > .000001 ? '$' + fmt(s.quoteBid, 3) : '—', s.quoteBid);
+    writeLive('quote-ask', s.quoteQtyAsk > .000001 ? '$' + fmt(s.quoteAsk, 3) : '—', s.quoteAsk);
     $('quote-bid-size').textContent = s.quoteQtyBid > .000001 ? fmt(s.quoteQtyBid, 3) + ' CL · virtual limit' : 'No active order';
     $('quote-ask-size').textContent = s.quoteQtyAsk > .000001 ? fmt(s.quoteQtyAsk, 3) + ' CL · virtual limit' : 'No active order';
+    renderLiveInputBoard();
   }
   function executePaper(side, px, qty, time) {
     if (!s.running || !readyToTrade() || !Number.isFinite(px) || px <= 0 || !Number.isFinite(qty) || qty <= 0) return;
@@ -196,14 +248,15 @@
   }
   function renderSummary() {
     const e = equity(), pnl = totalPnl(), p = s.paper;
-    $('equity').textContent = dollars(e);
-    $('pnl').textContent = (pnl > 0 ? '+' : '') + dollars(pnl);
+    writeLive('equity', dollars(e), e);
+    writeLive('pnl', (pnl > 0 ? '+' : '') + dollars(pnl), pnl);
     $('pnl').className = 'stat-value ' + (pnl > .00001 ? 'positive' : pnl < -.00001 ? 'negative' : '');
     $('pnl-sub').textContent = `${fmt(pnl / STARTING_CASH * 100)}% total return`;
     $('position').innerHTML = `${fmt(p.position, 3)} <small>CL</small>`;
     $('position-sub').textContent = p.position > 0 ? `LONG · avg entry $${fmt(p.avgEntry, 3)}` : p.position < 0 ? `SHORT · avg entry $${fmt(p.avgEntry, 3)}` : 'No open position';
-    $('fill-count').textContent = String(p.fills.length);
+    writeLive('fill-count', String(p.fills.length), p.fills.length);
     $('fill-sub').textContent = p.fills.length ? `Last fill ${utc(p.fills.at(-1).time)} UTC` : 'Awaiting first paper trade';
+    writeLive('input-inventory', fmt(p.position, 3) + ' CL', p.position);
     $('unrealized').textContent = dollars(unrealized());
     $('fees').textContent = dollars(p.fees);
     $('export-btn').disabled = p.fills.length === 0;
@@ -235,12 +288,13 @@
     const bidQty = bids.reduce((sum, l) => sum + (nnum(l.sz) || 0), 0);
     const askQty = asks.reduce((sum, l) => sum + (nnum(l.sz) || 0), 0);
     $('obi-value').textContent = bidQty + askQty > 0 ? fmt((bidQty - askQty) / (bidQty + askQty) * 100, 1) + '% OBI' : '—';
+    renderLiveInputBoard();
   }
   function updatePrice(price) {
     if (!(Number.isFinite(price) && price > 0)) return;
     s.price = price;
     s.lastFeed = Date.now();
-    $('price').textContent = '$' + fmt(price, 3);
+    writeLive('price', '$' + fmt(price, 3), price);
     $('last-update').textContent = 'Last tick ' + utc(Date.now()) + ' UTC';
     if (s.prevDay > 0) {
       const change = (price / s.prevDay - 1) * 100;
@@ -261,8 +315,8 @@
     const badge = $('poly-status');
     badge.className = 'status-pill ' + (live ? '' : 'offline');
     badge.innerHTML = '<i></i> ' + (live ? p.mode === 'github' ? 'GITHUB SNAPSHOT' : 'LIVE SNAPSHOT' : p.lastSuccess ? 'STALE / RETRYING' : p.error ? 'UNAVAILABLE' : 'CONNECTING');
-    $('poly-composite').textContent = p.ready ? fmt(p.composite * 100, 1) + '%' : '—';
-    $('poly-score').textContent = p.ready ? (p.score >= 0 ? '+' : '') + fmt(p.score, 3) : '—';
+    writeLive('poly-composite', p.ready ? fmt(p.composite * 100, 1) + '%' : '—', p.composite);
+    writeLive('poly-score', p.ready ? (p.score >= 0 ? '+' : '') + fmt(p.score, 3) : '—', p.score);
     const side = !p.ready ? '—' : p.score > 0.05 ? 'BULLISH WTI' : p.score < -0.05 ? 'BEARISH WTI' : 'NEUTRAL';
     $('poly-skew').textContent = live ? side : 'PAUSED / UNAVAILABLE';
     $('poly-model-value').textContent = live ? (p.score >= 0 ? '+' : '') + fmt(p.score, 3) : 'OFFLINE';
@@ -350,6 +404,23 @@
       if (!response.ok) throw new Error('HTTP ' + response.status);
       return response.json();
     } finally { clearTimeout(timeout); }
+  }
+  async function fetchTenY() {
+    // This is deliberately separate from xyz:CL. It is a public reference panel,
+    // not a synthetic WTI price and not an order/execution connection.
+    try {
+      const result = await info({ type: 'l2Book', coin: 'para:10Y' });
+      const levels = result?.levels;
+      const bid = nnum(levels?.[0]?.[0]?.px), ask = nnum(levels?.[1]?.[0]?.px);
+      if (!(bid > 0 && ask >= bid)) throw new Error('No active 10Y bid/ask');
+      const mid = (bid + ask) / 2;
+      writeLive('price-proxy', fmt(mid, 4), mid);
+      $('para-status').textContent = 'Public para:10Y order book · bid ' + fmt(bid, 4) + ' / ask ' + fmt(ask, 4) + ' · ' + utc(Date.now()) + ' UTC';
+    } catch (err) {
+      writeLive('price-proxy', '—');
+      $('para-status').textContent = 'para:10Y quote unavailable · visit Hyperliquid ↗';
+      console.warn('Public 10Y reference unavailable:', String(err?.message || err));
+    }
   }
   async function fetchContext() {
     try {
@@ -444,35 +515,80 @@
   }
   function drawPrice() {
     const frame = setupCanvas('price-chart'); if (!frame) return;
-    const { ctx, w, h } = frame, left = 7, right = 67, top = 18, bottom = 25, pw = w - left - right, ph = h - top - bottom;
-    const candles = s.candles.slice(-70), tickSeries = s.midHistory.slice(-100);
-    let lo, hi;
-    if (candles.length) { lo = Math.min(...candles.map(c => c.l)); hi = Math.max(...candles.map(c => c.h)); }
-    else if (tickSeries.length > 1) { lo = Math.min(...tickSeries.map(p => p.v)); hi = Math.max(...tickSeries.map(p => p.v)); }
-    else return;
-    const pad = Math.max((hi - lo) * .11, (lo || 1) * .0003);
-    lo -= pad; hi += pad;
-    const Y = v => top + (hi - v) / (hi - lo) * ph;
-    ctx.font = '10px system-ui'; ctx.textAlign = 'right'; ctx.strokeStyle = '#233042'; ctx.lineWidth = 1; ctx.fillStyle = '#8394a7';
-    for (let i = 0; i <= 4; i++) { const v = lo + (hi - lo) * (1 - i / 4), y = top + ph * i / 4;
-      ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(w - 57, y); ctx.stroke(); ctx.fillText(fmt(v, 2), w - 9, y + 4); }
-    if (candles.length) {
-      const dx = pw / candles.length, candleWidth = Math.max(2, Math.min(9, dx * .6));
-      for (let i = 0; i < candles.length; i++) {
-        const c = candles[i], x = left + dx * (i + .5), rising = c.c >= c.o;
-        ctx.strokeStyle = rising ? '#a9f184' : '#e67e85';ctx.fillStyle = rising ? '#a9f184' : '#e67e85';
-        ctx.beginPath(); ctx.moveTo(x, Y(c.h)); ctx.lineTo(x, Y(c.l)); ctx.stroke();
-        const y = Y(Math.max(c.o, c.c)), bh = Math.max(1, Math.abs(Y(c.o) - Y(c.c)));
-        ctx.fillRect(x - candleWidth / 2, y, candleWidth, bh);
-      }
-      $('chart-start').textContent = utc(candles[0].t); $('chart-end').textContent = utc(candles.at(-1).t);
-    } else if (tickSeries.length > 1) {
-      ctx.beginPath(); ctx.strokeStyle = '#b5f476';ctx.lineWidth = 2;
-      tickSeries.forEach((p, i) => { const x = left + pw * i / (tickSeries.length - 1); if (!i) ctx.moveTo(x, Y(p.v)); else ctx.lineTo(x, Y(p.v)); });ctx.stroke();
+    const { ctx, w, h } = frame;
+    const left = 26, right = 74, top = 42, bottom = 35;
+    const pw = Math.max(30, w - left - right), ph = Math.max(30, h - top - bottom);
+    const candles = s.candles.slice(-78);
+    const ticks = s.midHistory.slice(-110);
+    // Historical candle CLOSES; no fabricated interpolation or synthetic ticks.
+    const series = candles.map(c => ({ t: c.t, v: c.c }));
+    if (series.length && Number.isFinite(mark())) {
+      series[series.length - 1] = { ...series[series.length - 1], v: mark() };
+    } else if (!series.length) {
+      series.push(...ticks);
     }
-    if (Number.isFinite(mark()) && mark() >= lo && mark() <= hi) {
-      const y = Y(mark());ctx.setLineDash([3,4]); ctx.strokeStyle = '#b5f47699';ctx.beginPath();ctx.moveTo(left,y);ctx.lineTo(w-57,y);ctx.stroke();ctx.setLineDash([]);
-      ctx.fillStyle='#baf57c';ctx.fillRect(w-57,y-9,55,18);ctx.fillStyle='#152310';ctx.font='bold 10px system-ui';ctx.textAlign='center';ctx.fillText(fmt(mark(),2),w-29,y+4);
+    if (!series.length) { $('pencil-cursor').classList.add('hidden'); return; }
+    const values = candles.length ? candles.flatMap(c => [c.h,c.l]) : series.map(x => x.v);
+    if (!values.length) { $('pencil-cursor').classList.add('hidden'); return; }
+    let lo = Math.min(...values), hi = Math.max(...values);
+    const pad = Math.max((hi - lo) * .19, (lo || 1) * .00035);
+    lo -= pad; hi += pad;
+    const X = i => left + pw * i / Math.max(1, series.length - 1);
+    const Y = v => top + (hi - v) / (hi - lo) * ph;
+    // Notebook lines, mathematical axis ticks and one actual-price trace.
+    ctx.lineWidth = 1;
+    ctx.font = '11px ui-monospace, monospace';
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#58718a';
+    for (let i = 0; i <= 5; i++) {
+      const v = hi - (hi - lo) * i / 5;
+      const y = top + ph * i / 5;
+      ctx.strokeStyle = 'rgba(42,105,165,.17)';
+      ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(w - right + 12, y); ctx.stroke();
+      ctx.fillText(fmt(v, 2), w - 9, y + 3);
+    }
+    for (let i = 0; i <= 6; i++) {
+      const x = left + pw * i / 6;
+      ctx.strokeStyle = 'rgba(42,105,165,.11)';
+      ctx.beginPath();ctx.moveTo(x,top);ctx.lineTo(x,top+ph);ctx.stroke();
+    }
+    // Soft graph-pencil guide beneath the vivid red live trace.
+    if (series.length > 1) {
+      ctx.beginPath();
+      for (let i = 0; i < series.length; i++) {
+        const x = X(i), y = Y(series[i].v);
+        if (i === 0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+      }
+      ctx.strokeStyle = 'rgba(177,66,79,.15)'; ctx.lineJoin = 'round'; ctx.lineCap='round'; ctx.lineWidth=8;ctx.stroke();
+      ctx.strokeStyle = '#c74252'; ctx.lineWidth = 3.1;ctx.stroke();
+      // A subtle close marker for each real observation, not fake candles.
+      ctx.fillStyle = 'rgba(199,66,82,.24)';
+      for (let i=0;i<series.length-1;i+=Math.max(1,Math.floor(series.length/35))) {
+        ctx.beginPath();ctx.arc(X(i),Y(series[i].v),1.6,0,Math.PI*2);ctx.fill();
+      }
+    }
+    const last = series[series.length-1], endpointX = X(series.length - 1), endpointY = Y(last.v);
+    const realFeed = Number.isFinite(mark()) && s.connected && Date.now() - s.lastFeed <= 30000;
+    ctx.setLineDash([5,5]);ctx.strokeStyle='rgba(197,65,81,.3)';ctx.lineWidth=1;
+    ctx.beginPath();ctx.moveTo(left, endpointY);ctx.lineTo(w-right+10, endpointY);ctx.stroke();ctx.setLineDash([]);
+    ctx.fillStyle = realFeed ? '#c74252' : '#7e91a0';
+    ctx.beginPath();ctx.arc(endpointX, endpointY, 5.2, 0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle='rgba(255,255,255,.94)';ctx.lineWidth=2;ctx.stroke();
+    ctx.fillStyle='rgba(255,244,226,.96)';ctx.fillRect(w-right+14,endpointY-11,58,23);
+    ctx.fillStyle='#a82b41';ctx.font='bold 11px ui-monospace, monospace';ctx.textAlign='center';
+    ctx.fillText(fmt(last.v,2),w-right+43,endpointY+4);
+    $('chart-start').textContent = utc(series[0].t);
+    $('chart-end').textContent = utc(last.t);
+    const pencil = $('pencil-cursor');
+    if (realFeed && series.length > 1) {
+      pencil.style.left = Math.round(endpointX - 122) + 'px';
+      pencil.style.top = Math.round(endpointY - 14) + 'px';
+      pencil.style.transform = 'rotate(' + clamp((series.at(-1).v - series.at(-2).v) / Math.max(.001, (hi - lo)) * -26, -18, 18) + 'deg)';
+      pencil.classList.remove('hidden');
+      $('chart-pencil-live').textContent = '✎ Pencil tracing live WTI · ' + utc(Date.now()) + ' UTC';
+    } else {
+      pencil.classList.add('hidden');
+      $('chart-pencil-live').textContent = '✎ Historic WTI trace · live feed waiting';
     }
   }
   function drawEquity() {
@@ -485,9 +601,9 @@
     const ymin = lo - pad, ymax = hi + pad;
     const X = i => 12 + (w - 25) * i / Math.max(1, values.length - 1);
     const Y = v => 10 + (ymax - v) / (ymax - ymin) * (h - 20);
-    ctx.setLineDash([4,5]);ctx.strokeStyle='#25364a';ctx.beginPath();ctx.moveTo(0,Y(STARTING_CASH));ctx.lineTo(w,Y(STARTING_CASH));ctx.stroke();ctx.setLineDash([]);
-    const positive = values.at(-1) >= STARTING_CASH, color = positive ? '#bdf17a' : '#f58b91';
-    const gradient = ctx.createLinearGradient(0,0,0,h);gradient.addColorStop(0,positive?'#bdf17a35':'#f58b9128');gradient.addColorStop(1,'#111a2800');
+    ctx.setLineDash([4,5]);ctx.strokeStyle='rgba(30,77,120,.22)';ctx.beginPath();ctx.moveTo(0,Y(STARTING_CASH));ctx.lineTo(w,Y(STARTING_CASH));ctx.stroke();ctx.setLineDash([]);
+    const positive = values.at(-1) >= STARTING_CASH, color = positive ? '#28875a' : '#c44c5b';
+    const gradient = ctx.createLinearGradient(0,0,0,h);gradient.addColorStop(0,positive?'#28875a30':'#c44c5b26');gradient.addColorStop(1,'#ffffff00');
     ctx.beginPath();values.forEach((v,i)=>{if(i===0)ctx.moveTo(X(i),Y(v));else ctx.lineTo(X(i),Y(v));});ctx.lineTo(X(values.length-1),h);ctx.lineTo(X(0),h);ctx.closePath();ctx.fillStyle=gradient;ctx.fill();
     ctx.beginPath();values.forEach((v,i)=>{if(i===0)ctx.moveTo(X(i),Y(v));else ctx.lineTo(X(i),Y(v));});ctx.strokeStyle=color;ctx.lineWidth=2;ctx.stroke();
     ctx.fillStyle=color;ctx.beginPath();ctx.arc(X(values.length-1),Y(values.at(-1)),3,0,Math.PI*2);ctx.fill();
@@ -514,6 +630,7 @@
         setRunning(false); toast('A required market-data feed is stale. Paper trading paused.');
       }
       updateStartAvailability();
+      renderLiveInputBoard();
       // Show stale feed state immediately, not only on the next 30-second poll.
       if (s.poly.lastSuccess && !polyReady() && $('poly-status').textContent.includes('LIVE')) renderHormuz();
       if (s.running) { snapshotEquity(); renderSummary();drawEquity(); }
@@ -536,9 +653,10 @@
     nav.forEach(a => a.addEventListener('click', () => { nav.forEach(x => x.classList.remove('active'));a.classList.add('active'); }));
     window.addEventListener('resize', () => { drawPrice(); drawEquity(); });
     window.addEventListener('beforeunload', savePaper);
-    connect();fetchContext();fetchCandles();fetchHormuz();
+    connect();fetchContext();fetchCandles();fetchHormuz();fetchTenY();
     setInterval(fetchHormuz, POLY_POLL_MS);
     setInterval(fetchContext, 45000);
+    setInterval(fetchTenY, 30000);
     setInterval(fetchCandles, 180000);
   }
   init();

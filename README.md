@@ -1,20 +1,44 @@
-# CrudeEdge — WTI / Hormuz Paper Trading Terminal
+# CrudeEdge v1.4 — Handwritten Quant Notebook Paper Trading Terminal
 
-A shareable, English-language **GitHub Pages** paper-trading terminal. It uses read-only **public Hyperliquid `xyz:CL` WTI** data **and live-read public Polymarket Strait of Hormuz probabilities** to adjust a hypothetical two-sided virtual quoting strategy. No user account, wallet, key, backend, real order or installation is required.
+A shareable, English-language **GitHub Pages** paper-trading terminal with a genuinely hand-drawn graph-paper UI, animated price pencil and live-changing formula values. It uses read-only **public Hyperliquid `xyz:CL` WTI** data **and live-read public Polymarket Strait of Hormuz probabilities** to adjust a hypothetical two-sided virtual quoting strategy. No user account, wallet, key, backend, real order or installation is required.
 
 **The Hormuz probability feed is a real formula input** (not merely a widget). This is a standalone browser educational simulator, **not** the original Python ML engine and **not** a validated trading strategy.
 
-**[Open the dashboard](https://YOUR-USERNAME.github.io/YOUR-REPOSITORY/)** ← Replace this example URL after you publish it with GitHub Pages.
+**[Open the PaperTradeWTI dashboard](https://leendertvang-dot.github.io/PaperTradeWTI/)** (live site requires a successful GitHub Pages deployment).
 
 ![CrudeEdge paper-trading dashboard mock preview](assets/dashboard-preview.webp)
 
 *Illustrative preview with synthetic test prices, **not** a current market quote.*
 
+## What's new in v1.4
+
+- **Flat math-notebook aesthetic:** light paper texture, blue graph-paper rulings, a red margin line and handwritten-style annotations. There is **no open-book mockup** or static background photo.
+- **Live pencil marker:** an inline SVG pencil follows the latest plotted **real WTI market observation**. It is hidden whenever the feed is not current; smooth movement respects reduced-motion settings.
+- **Changing-number feedback:** new numeric values pulse green for increases and red for decreases (actual observed changes only).
+- **12-value transparent input board:** best bid, best ask, spread, order-book imbalance, Polymarket weighted YES probability, observed probability delta, risk score, virtual inventory, both quote offsets and both posted virtual notionals.
+- **Quote math display:** live Hormuz probability → score → bid/ask offset breakdown; the score **really affects posted virtual paper prices and size**, subject to a cash and inventory cap.
+- **Read-only `para:10Y` panel:** uses Hyperliquid public `l2Book` Info requests to display its **own** indicative midprice when available. It is a separate rates/reference market and **does not masquerade as a WTI proxy or change the WTI formula**. If unavailable, it displays an unavailable state and never invents a value.
+- **Safe GitHub update:** the original `.github/workflows` hierarchy and keyless scheduled Polymarket snapshot remain unchanged.
+
+The preview shows **synthetic mock-feed test values**, not current prices or investment performance.
+
+## Update existing repository `leendertvang-dot/PaperTradeWTI`
+
+Use **GitHub Desktop** for replacing the project safely. In particular, dragging the extracted directories into GitHub's web upload form may flatten the `.github` hierarchy.
+
+1. In GitHub Desktop, select **File → Clone repository**, then choose `leendertvang-dot/PaperTradeWTI` and clone it (skip cloning if you already have it locally).
+2. Download and extract the v1.4 ZIP. In Windows Explorer, open the extracted folder and **copy all contents**, including `.github`, `assets`, `scripts`, and `tests`, into your locally cloned `PaperTradeWTI` directory. Replace existing files; **do not delete** the local hidden `.git` folder.
+3. In GitHub Desktop, inspect the Changes tab, enter commit summary `CrudeEdge v1.4 handwritten notebook redesign`, click **Commit to main**, then **Push origin**.
+4. Visit [Actions](https://github.com/leendertvang-dot/PaperTradeWTI/actions) and verify both **Validate safe public paper trading app** and **Deploy public dashboard with Hormuz market snapshots** finish green. In Settings → Pages, keep Source set to **GitHub Actions**.
+5. Visit [the public dashboard](https://leendertvang-dot.github.io/PaperTradeWTI/). If the browser retains old CSS, use Ctrl+F5 to reload.
+
+The update does not upload anyone's browser-local paper positions. No GitHub repository secrets are necessary.
+
 ## Features
 
 - Clear **Start Paper Trading** and **Pause Trading** controls; live **Hyperliquid and Polymarket** feeds are both required to start.
 - Live WTI (`xyz:CL`) top-of-book, price, spread and public market snapshot.
-- Historical candlesticks from the Hyperliquid read-only Info API.
+- Historical candle **closes** are shown as a red, hand-drawn-style line, with live WTI ticks moving the pencil tip. Candles are retrieved from Hyperliquid’s read-only Info API.
 - Fully simulated trades with a $10,000 initial virtual balance, virtual P&L/equity, position limits, hypothetical maker fees, trade history and CSV export.
 - Session data saved **only in the visitor's browser** via `localStorage` (never uploaded).
 - A dedicated **Hormuz Risk Signal** dashboard: four deadline probabilities, weighted composite YES probability, 15-minute observed change, oil-risk score and live virtual order skew.
@@ -50,6 +74,7 @@ The app sends read-only requests only to **public market-data endpoints**:
 | --- | --- | --- |
 | Hyperliquid Info API | `POST https://api.hyperliquid.xyz/info` | `metaAndAssetCtxs` with `dex: "xyz"`; `candleSnapshot` for `xyz:CL` |
 | Hyperliquid public WebSocket | `wss://api.hyperliquid.xyz/ws` | Subscribe to `l2Book` and `trades` for `xyz:CL`, `allMids` for `xyz` |
+| Hyperliquid 10Y reference | `POST https://api.hyperliquid.xyz/info` | Public `l2Book` query for `para:10Y` (independent reference market; **not** a WTI signal) |
 | Polymarket Gamma API | `GET https://gamma-api.polymarket.com/events/slug/strait-of-hormuz-traffic-returns-to-normal-byptptpt` | Browser-direct public read when CORS permits; read YES prices |
 | GitHub Pages same-origin snapshot | `GET ./data/hormuz-snapshot.json` | Automatic fallback, generated from the **same Gamma event** by a public GitHub Actions cron job (approximately every 10 minutes, potentially delayed) |
 

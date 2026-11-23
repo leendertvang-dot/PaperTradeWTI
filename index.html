@@ -3,50 +3,364 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="theme-color" content="#080c15" />
-  <meta name="description" content="CrudeEdge — a free, public, browser-based WTI paper-trading lab powered by live Hyperliquid market data. No wallet, no real orders." />
+  <meta name="theme-color" content="#f6f1df" />
+  <meta name="description" content="CrudeEdge — a free, public, browser-based WTI paper-trading lab powered by live Hyperliquid market data and a live Polymarket Hormuz input. No wallet, no real orders." />
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' https://api.hyperliquid.xyz wss://api.hyperliquid.xyz https://gamma-api.polymarket.com; img-src 'self' data:; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; form-action 'none'" />
-  <title>CrudeEdge · WTI Paper Trading Terminal</title>
+  <title>CrudeEdge · Handwritten Quant Notebook • Live Paper Trading</title>
   <link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="styles.css" />
   <script src="hormuz-signal.js" defer></script>
   <script src="app.js" defer></script>
 </head>
 <body>
-  <div class="app-shell">
-    <aside class="sidebar" aria-label="Primary navigation">
-      <a href="#overview" class="brand"><span class="brand-icon">C<span class="brand-dot">.</span></span><span class="brand-copy">CRUDE<span>EDGE</span><small>TRADING LAB / V1.2</small></span></a>
-      <div class="nav-title">WORKSPACE</div>
-      <nav class="nav-links">
-        <a href="#overview" class="nav-link active" data-nav="overview"><span class="nav-icon">▦</span> Overview <span class="nav-pip"></span></a>
-        <a href="#market" class="nav-link" data-nav="market"><span class="nav-icon">⌁</span> Market data</a>
-        <a href="#strategy" class="nav-link" data-nav="strategy"><span class="nav-icon">◈</span> Strategy lab</a>
-        <a href="#activity" class="nav-link" data-nav="activity"><span class="nav-icon">▤</span> Trade history</a>
+  <div class="page-wrap">
+    <header class="notebook-topbar">
+      <a href="#overview" class="brand brand-inline" data-nav="overview">
+        <span class="brand-mark">∫</span>
+        <span class="brand-copy">PaperTradeWTI <small>Notebook edition / v1.4</small></span>
+      </a>
+      <nav class="tabbar nav-links" aria-label="Primary navigation">
+        <a href="#overview" class="nav-link active" data-nav="overview">Trading Dashboard</a>
+        <a href="#market" class="nav-link" data-nav="market">Market Inputs</a>
+        <a href="#strategy" class="nav-link" data-nav="strategy">Quote Engine</a>
+        <a href="#activity" class="nav-link" data-nav="activity">Trade History</a>
       </nav>
-      <div class="sidebar-bottom"><div class="sidebar-source"><span class="source-icon">◎</span><div>MARKET DATA<span>Hyperliquid · Mainnet</span></div></div><span class="smallnote">Public market data only.<br />No account connection. No real orders.</span><a class="docs-link" href="https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api" target="_blank" rel="noopener noreferrer">API documentation ↗</a></div>
-    </aside>
-    <main class="main" id="overview">
-      <header class="topbar"><div class="topbar-left"><span class="eyebrow">WORKSPACE <span class="dim">/</span> TRADING TERMINAL</span><span class="topbar-slash">/</span><span class="topbar-page">Overview</span></div><div class="topbar-right"><span id="feed-status" class="status-pill offline"><i></i> CONNECTING</span><span id="clock" class="clock">--:--:-- UTC</span><a href="https://github.com/new" target="_blank" rel="noopener noreferrer" class="topbar-link" title="Create a GitHub repository">GitHub ↗</a></div></header>
-      <div class="content">
-        <section class="hero"><div><div class="hero-kicker"><span class="hero-line"></span> A MORE INTELLIGENT WAY TO EXPERIMENT</div><h1>WTI Paper Trading <span>Terminal<span class="accent">.</span></span></h1><p>Real-time crude oil markets. Virtual capital. Zero financial risk.</p></div><div class="hero-actions"><span class="safety-label">◉ 100% SIMULATED EXECUTION</span><button id="start-btn" class="btn-primary" disabled><span class="play-icon">▶</span> Start Paper Trading</button><button id="stop-btn" class="btn-outline hidden">Ⅱ Pause Trading</button><small id="start-requirement" class="start-requirement">Waiting for Hyperliquid and Polymarket market feeds</small></div></section>
-        <div class="notice"><span class="notice-icon">ⓘ</span><span><strong>Paper environment.</strong> Prices are sourced from Hyperliquid’s public WTI perpetual market (<code>xyz:CL</code>). All positions, orders, fills and P&amp;L are simulations in this browser. This is an educational approximation with a public Polymarket Hormuz-risk input—not your original Python execution/ML engine.</span><button id="dismiss-notice" aria-label="Dismiss note">×</button></div>
-        <section class="market-banner" id="market"><div class="market-identity"><div class="market-coin">CL</div><div><div class="label-mini">HYPERLIQUID <span class="mini-separator">/</span> TRADE.XYZ</div><h2>WTI Crude Oil <span class="tag-perp">PERPETUAL</span></h2><div class="ticker-line">xyz:CL <span class="tiny-divider">|</span> USD / barrel <span class="tiny-divider">|</span> HIP-3</div></div></div><div class="market-price"><div class="label-mini">LIVE MID PRICE</div><div class="price-line"><span id="price">—</span><span id="change" class="market-change">—</span></div><div class="live-subtext"><span class="pulse-dot"></span><span id="last-update">Waiting for market feed</span></div></div><div class="market-details"><div><span>24H VOLUME</span><strong id="volume">—</strong></div><div><span>CURRENT FUNDING</span><strong id="funding">—</strong></div><div><span>OPEN INTEREST</span><strong id="open-interest">—</strong></div></div></section>
-        <section class="hormuz-panel" id="hormuz" aria-label="Polymarket Hormuz probability input">
-          <div class="hormuz-top"><div><div class="panel-eyebrow">GEOPOLITICAL INTELLIGENCE <span class="live-chip">PUBLIC POLYMARKET DATA</span></div><h3>Strait of Hormuz <span>Risk Signal</span></h3><p>Probability that commercial traffic returns to normal by each deadline. These are separate cumulative YES markets—not mutually exclusive outcomes.</p></div><div class="hormuz-status-col"><span id="poly-status" class="status-pill offline"><i></i> CONNECTING</span><a href="https://polymarket.com/event/strait-of-hormuz-traffic-returns-to-normal-byptptpt" rel="noopener noreferrer" target="_blank" class="poly-link">View original market ↗</a></div></div>
-          <div class="hormuz-body"><div class="hormuz-kpis"><div><small>WEIGHTED YES PROBABILITY</small><strong id="poly-composite">—</strong><span id="poly-age">Awaiting public Gamma API…</span></div><div><small>OIL-RISK MODEL SCORE</small><strong id="poly-score">—</strong><span id="poly-delta">15-min change: —</span></div><div><small>QUOTE SKEW</small><strong id="poly-skew">—</strong><span id="poly-source">Source: —</span></div></div><div class="hormuz-horizons" id="poly-horizons"><span class="poly-empty">Waiting for live probabilities…</span></div></div>
-          <div class="hormuz-method"><strong>Used in the trading formula:</strong> weighted YES probability = 40% Jan + 30% Mar + 20% Jun + 10% Dec (renormalized when a market is unavailable). Oil-risk score = 0.25 × (1 − 2P) + 0.75 × clamp(−ΔP / 0.05, −1, 1), where ΔP is the observed change over up to 15 minutes. This score changes both virtual order sizes and quote offsets. <strong>Experimental heuristic; not a validated predictive edge.</strong> The simulator will pause if either feed becomes unavailable.</div>
-        </section>
-        <section class="stat-grid" aria-label="Simulated portfolio summary"><article class="stat-card"><div class="stat-heading">Portfolio equity <span>◫</span></div><div class="stat-value" id="equity">$10,000.00</div><div class="stat-foot">Virtual account balance</div></article><article class="stat-card"><div class="stat-heading">Total P&amp;L <span>↗</span></div><div class="stat-value" id="pnl">$0.00</div><div class="stat-foot" id="pnl-sub">0.00% total return</div></article><article class="stat-card"><div class="stat-heading">Net exposure <span>◈</span></div><div class="stat-value" id="position">0.000 <small>CL</small></div><div class="stat-foot" id="position-sub">No open position</div></article><article class="stat-card"><div class="stat-heading">Executed fills <span>⇄</span></div><div class="stat-value" id="fill-count">0</div><div class="stat-foot" id="fill-sub">Awaiting first paper trade</div></article></section>
-        <section class="work-grid"><div class="left-work"><article class="panel chart-panel"><div class="panel-head"><div><div class="panel-eyebrow">PRICE DISCOVERY</div><h3>WTI Market Overview</h3></div><div class="panel-tools"><span class="live-chip" id="chart-label">LIVE FEED</span><select id="chart-interval" class="thin-select" aria-label="Chart timeframe"><option value="1m">1 minute</option><option value="5m" selected>5 minutes</option><option value="15m">15 minutes</option><option value="1h">1 hour</option></select></div></div><div class="chart-legend"><span class="legend-dot"></span> <span id="chart-symbol">WTI / USDC · 5m</span><span class="chart-caption">Historical candles and live ticks</span></div><div class="chart-container"><canvas id="price-chart" role="img" aria-label="WTI price chart"></canvas><div class="chart-empty" id="chart-empty">Connecting to Hyperliquid market data…</div></div><div class="chart-axis"><span id="chart-start">—</span><span>HYPERLIQUID PUBLIC API</span><span id="chart-end">—</span></div></article>
-          <article class="panel equity-panel"><div class="panel-head"><div><div class="panel-eyebrow">VIRTUAL PORTFOLIO</div><h3>Equity Curve</h3></div><span class="soft-tag">SESSION PERFORMANCE</span></div><div class="mini-chart-wrap"><canvas id="equity-chart" role="img" aria-label="Virtual equity chart"></canvas></div><div class="equity-foot"><span>Starting capital <b>$10,000.00</b></span><span>Unrealized P&amp;L <b id="unrealized">$0.00</b></span><span>Simulated fees <b id="fees">$0.00</b></span></div></article></div>
-          <div class="right-work"><article class="panel orderbook-panel"><div class="panel-head"><div><div class="panel-eyebrow">MARKET MICROSTRUCTURE</div><h3>Order Book</h3></div><span class="soft-tag">TOP 5 LEVELS</span></div><div class="book-head"><span>PRICE (USD)</span><span>SIZE (CL)</span><span>TOTAL</span></div><div id="asks" class="book-rows" aria-label="Ask levels"></div><div class="book-spread"><span>SPREAD</span><strong id="spread">—</strong><span id="spread-bps">—</span></div><div id="bids" class="book-rows" aria-label="Bid levels"></div><div class="book-foot">Public order book · read-only</div></article>
-          <article class="panel simulation-panel" id="strategy"><div class="panel-head"><div><div class="panel-eyebrow">EXECUTION ENGINE</div><h3>Paper Trading Controls</h3></div><span id="engine-status" class="engine-badge">STANDBY</span></div><div class="engine-summary"><div><span class="label-mini">STRATEGY</span><strong>Hormuz-adjusted Two-Sided Quoting</strong><small>Virtual size &amp; spread skew from Polymarket YES odds</small></div><div class="engine-indicator" id="engine-indicator"><span>●</span> IDLE</div></div><div class="settings-row"><label for="trade-size">Order size <small>(USD / side)</small></label><div class="input-unit"><span>$</span><input id="trade-size" type="number" min="10" max="10000" step="10" value="200" /></div></div><div class="settings-row"><label for="quote-offset">Additional quote offset <small>(basis points)</small></label><div class="input-unit"><input id="quote-offset" type="number" min="0" max="50" step="0.5" value="0" /><span>bps</span></div></div><div class="settings-row"><label for="max-position">Maximum position <small>(barrels)</small></label><div class="input-unit"><input id="max-position" type="number" min="0.1" max="100" step="0.1" value="5" /><span>CL</span></div></div><div class="quote-pair"><div><span>SIMULATED BUY QUOTE</span><strong id="quote-bid">—</strong><small id="quote-bid-size">No active order</small></div><div><span>SIMULATED SELL QUOTE</span><strong id="quote-ask">—</strong><small id="quote-ask-size">No active order</small></div></div><button id="reset-btn" class="btn-secondary">↺ Reset paper account</button><div class="hint">Quotes and fills are estimates, not real exchange orders. Settings can be changed while paused.</div></article></div></section>
-        <section class="bottom-grid" id="activity"><article class="panel activity-panel"><div class="panel-head"><div><div class="panel-eyebrow">EXECUTION AUDIT TRAIL</div><h3>Paper Trade History</h3></div><button id="export-btn" class="btn-text" disabled>↓ Export CSV</button></div><div class="table-scroll"><table class="trades-table"><thead><tr><th>TIME (UTC)</th><th>SIDE</th><th>PRICE</th><th>SIZE</th><th>NOTIONAL</th><th>FEE</th></tr></thead><tbody id="trade-rows"><tr><td colspan="6" class="empty-trades">Your simulated fills will appear here when paper trading begins.</td></tr></tbody></table></div></article><article class="panel research-panel"><div class="panel-head"><div><div class="panel-eyebrow">STRATEGY TRANSPARENCY</div><h3>Model Monitor</h3></div><span class="soft-tag">RESEARCH ONLY</span></div><div class="research-intro">The original v4.2 Python ML models are <strong>not executed</strong> here. The dedicated Hormuz probability heuristic above <strong>does</strong> drive virtual quote size and offsets.</div><div class="research-item"><span class="research-glyph">◈</span><div><strong>Order flow / OBI</strong><small>Derived from public order-book imbalance</small></div><b id="obi-value">—</b></div><div class="research-item"><span class="research-glyph">⌁</span><div><strong>Online ML / RLS</strong><small>Original model not running in browser</small></div><span class="inactive-tag">OFF</span></div><div class="research-item"><span class="research-glyph">◇</span><div><strong>Brent / macro lead-lag</strong><small>Original validation pipeline not loaded</small></div><span class="inactive-tag">OFF</span></div><div class="research-item"><span class="research-glyph">◉</span><div><strong>Hormuz Polymarket signal</strong><small>Live input to virtual quotation formula</small></div><b id="poly-model-value">WAITING</b></div></article></section>
-        <footer><span>© <span id="year"></span> CrudeEdge <span class="tiny-divider">/</span> Open-source educational paper-trading terminal</span><span><span class="green-dot">●</span> No wallet · No secrets · No on-chain execution</span></footer>
+      <div class="topbar-meta">
+        <span id="feed-status" class="status-pill offline"><i></i> CONNECTING</span>
+        <span id="clock" class="clock">--:--:-- UTC</span>
       </div>
+    </header>
+
+    <main class="main" id="overview">
+      <section class="hero-grid">
+        <div class="hero-copy panel paper-hero">
+          <div class="eyebrow-line">LIVE INPUTS → SIGNAL → QUOTES → PAPER FILLS</div>
+          <h1>Live markets. <span>Pencil-drawn logic.</span></h1>
+          <p>
+            Live Hyperliquid market data, live Hormuz probability input, and simulated bid/ask quotes that are
+            <strong>directly changed by the incoming data streams</strong>. This is a public paper-trading terminal — no private keys, no wallet, no real orders.
+          </p>
+          <div class="hero-badges">
+            <span class="scribble-badge">Hand-drawn market trace</span>
+            <span class="scribble-badge">Dynamic quote engine</span>
+            <span class="scribble-badge">Public data only</span>
+          </div>
+        </div>
+        <div class="hero-actions panel control-panel">
+          <div class="handdrawn-arrow" aria-hidden="true">↘</div>
+          <div class="sticky-note">Inputs are <strong>not research only</strong> — they actively influence quote skew and quote distance.</div>
+          <button id="start-btn" class="btn-primary" disabled><span class="play-icon">▶</span> Start Paper Trading</button>
+          <button id="stop-btn" class="btn-outline hidden">Ⅱ Pause Trading</button>
+          <small id="start-requirement" class="start-requirement">Waiting for Hyperliquid and Polymarket market feeds</small>
+        </div>
+      </section>
+
+      <div class="notice panel notice-panel">
+        <span class="notice-icon">ⓘ</span>
+        <span><strong>Paper environment.</strong> Public prices come from Hyperliquid <code>xyz:CL</code>. The interface also shows a <strong>Hyperliquid para:10Y proxy component</strong> for monitoring context, while the live WTI quotes and virtual fills remain driven by the public WTI feed and the Polymarket Hormuz signal.</span>
+        <button id="dismiss-notice" aria-label="Dismiss note">×</button>
+      </div>
+
+      <section class="dashboard-grid">
+        <div class="left-stack">
+          <section class="panel chart-panel" id="market">
+            <div class="section-head">
+              <div>
+                <div class="panel-eyebrow">LIVE CHARTING PAGE</div>
+                <h2>WTI curve notebook</h2>
+              </div>
+              <div class="head-side">
+                <span class="live-chip" id="chart-label">LIVE FEED</span>
+                <select id="chart-interval" class="thin-select" aria-label="Chart timeframe">
+                  <option value="1m">1 minute</option>
+                  <option value="5m" selected>5 minutes</option>
+                  <option value="15m">15 minutes</option>
+                  <option value="1h">1 hour</option>
+                </select>
+              </div>
+            </div>
+            <div class="chart-header-row">
+              <div>
+                <div class="market-title-line">WTI Crude Oil <span class="tag-perp">live paper market</span></div>
+                <div class="tiny-meta" id="chart-symbol">WTI / USDC · 5m</div>
+              </div>
+              <div class="live-price-cluster">
+                <div class="live-big"><span id="price">—</span> <span id="change" class="market-change">—</span></div>
+                <div class="live-subtext"><span class="pulse-dot"></span><span id="last-update">Waiting for market feed</span></div>
+              </div>
+            </div>
+            <div class="chart-stage">
+              <div id="pencil-cursor" class="pencil-cursor hidden" aria-hidden="true">
+                <svg viewBox="0 0 124 28" width="124" height="28" role="presentation">
+                  <rect x="5" y="5" width="94" height="18" rx="5" fill="#f2b12d" stroke="#965e06" stroke-width="1.6"/>
+                  <rect x="5" y="12" width="94" height="5" fill="#e28b17" opacity=".7" />
+                  <rect x="5" y="5" width="17" height="18" rx="3" fill="#ed8d91" stroke="#965e06" stroke-width="1"/>
+                  <path d="M99 5 L121 14 L99 23 Z" fill="#d8b18a" stroke="#a77438" stroke-width="1.2"/>
+                  <path d="M114 11 L122 14 L114 17 Z" fill="#273344"/>
+                  <path d="M26 8 L89 8" stroke="#ffe19a" stroke-width="2" stroke-linecap="round" />
+                </svg>
+              </div>
+              <div id="chart-pencil-live" class="chart-pencil-live">✎ Connecting to live price…</div>
+              <canvas id="price-chart" role="img" aria-label="WTI price chart"></canvas>
+              <div class="chart-empty" id="chart-empty">Connecting to Hyperliquid market data…</div>
+            </div>
+            <div class="chart-axis-note">
+              <span id="chart-start">—</span>
+              <span>Hand-drawn graph-paper style · live data stream</span>
+              <span id="chart-end">—</span>
+            </div>
+          </section>
+
+          <section class="panel formula-panel" id="hormuz">
+            <div class="section-head">
+              <div>
+                <div class="panel-eyebrow">FORMULA BREAKDOWN</div>
+                <h2>Live input breakdown</h2>
+              </div>
+              <div class="head-side dual-status">
+                <span id="poly-status" class="status-pill offline"><i></i> CONNECTING</span>
+                <span class="status-pill pencil-status"><i></i> QUOTES MOVE WITH INPUTS</span>
+              </div>
+            </div>
+            <div class="formula-layout">
+              <div class="live-stream-bar">
+                <span class="stream-dot"></span><strong>RAW STREAMS → QUOTE MATH</strong>
+                <span id="flow-feed-stamp">Awaiting market feeds</span>
+              </div>
+              <div class="formula-kpis">
+                <div class="formula-kpi"><small>Weighted Hormuz probability</small><strong id="poly-composite">—</strong><span id="poly-age">Awaiting public Gamma API…</span></div>
+                <div class="formula-kpi"><small>Risk score</small><strong id="poly-score">—</strong><span id="poly-delta">Observed ≤15m ΔP: —</span></div>
+                <div class="formula-kpi"><small>Quote bias</small><strong id="poly-skew">—</strong><span id="poly-source">Source: —</span></div>
+              </div>
+              <div class="input-board" aria-label="Real-time inputs to the paper quote formula">
+                <div class="input-row"><span>WTI best bid <i>B</i></span><strong id="input-best-bid">—</strong></div>
+                <div class="input-row"><span>WTI best ask <i>A</i></span><strong id="input-best-ask">—</strong></div>
+                <div class="input-row"><span>Market spread <i>A−B</i></span><strong id="input-spread">—</strong></div>
+                <div class="input-row"><span>Book imbalance <i>OBI</i></span><strong id="input-obi">—</strong></div>
+                <div class="input-row"><span>Hormuz weighted YES <i>P</i></span><strong id="input-hormuz">—</strong></div>
+                <div class="input-row"><span>Probability change <i>ΔP</i></span><strong id="input-delta">—</strong></div>
+                <div class="input-row"><span>Oil-risk score <i>s</i></span><strong id="input-score">—</strong></div>
+                <div class="input-row"><span>Virtual inventory <i>I</i></span><strong id="input-inventory">0.000 CL</strong></div>
+                <div class="input-row output"><span>Bid offset <i>bps</i></span><strong id="input-bid-offset">—</strong></div>
+                <div class="input-row output"><span>Ask offset <i>bps</i></span><strong id="input-ask-offset">—</strong></div>
+                <div class="input-row output"><span>Paper bid notional</span><strong id="input-bid-notional">—</strong></div>
+                <div class="input-row output"><span>Paper ask notional</span><strong id="input-ask-notional">—</strong></div>
+              </div>
+              <div class="equation-strip">
+                <div class="equation-block">
+                  <span class="handnote">~ live formula ~</span>
+                  <span class="eq-title">Model logic</span>
+                  <p><strong>P</strong> = weighted Hormuz probability</p>
+                  <p><strong>s</strong> = signal from <span class="mono">P</span> and <span class="mono">ΔP</span></p>
+                  <p><strong>k</strong> = quote size / distance tilt from <span class="mono">s</span> (inventory affects capacity)</p>
+                  <p><strong>Bid / Ask</strong> = orderbook ± score-adjusted distance</p>
+                </div>
+                <div class="equation-block emphasis">
+                  <span class="eq-title">Live engine reading</span>
+                  <p>Score now: <strong id="poly-model-value">OFFLINE</strong></p>
+                  <p>When score rises → bids get stronger / asks get lighter</p>
+                  <p>When score falls → bids widen / asks get stronger</p>
+                </div>
+              </div>
+              <div class="poly-horizon-wrap" id="poly-horizons"><span class="poly-empty">Waiting for live probabilities…</span></div>
+              <div class="math-flow">
+                <span class="math-chip">Live WTI book</span><b>+</b><span class="math-chip">Hormuz odds</span><b>→</b>
+                <span class="math-chip math-chip-special">Model score</span><b>→</b><span class="math-chip math-chip-positive">Paper bid / ask</span>
+              </div>
+              <div class="formula-footnote">
+                Read-only public feeds only: <a href="https://polymarket.com/event/strait-of-hormuz-traffic-returns-to-normal-byptptpt" target="_blank" rel="noopener noreferrer">original Polymarket event ↗</a>
+                · API source: <span class="mono">https://gamma-api.polymarket.com</span>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel market-cards-panel">
+            <div class="market-cards">
+              <article class="metric-card">
+                <span>24H volume</span>
+                <strong id="volume">—</strong>
+                <small>Hyperliquid WTI feed</small>
+              </article>
+              <article class="metric-card">
+                <span>Current funding</span>
+                <strong id="funding">—</strong>
+                <small>Public derivative context</small>
+              </article>
+              <article class="metric-card">
+                <span>Open interest</span>
+                <strong id="open-interest">—</strong>
+                <small>Context for quote sizing</small>
+              </article>
+              <article class="metric-card">
+                <span>Order book imbalance</span>
+                <strong id="obi-value">—</strong>
+                <small>Derived from top book levels</small>
+              </article>
+            </div>
+          </section>
+        </div>
+
+        <div class="right-stack">
+          <section class="panel quote-panel" id="strategy">
+            <div class="section-head">
+              <div>
+                <div class="panel-eyebrow">QUOTE OUTPUT</div>
+                <h2>Live quote engine</h2>
+              </div>
+              <div class="engine-state"><span id="engine-status" class="soft-tag">STANDBY</span><span id="engine-indicator" class="indicator-tag"><span>●</span> IDLE</span></div>
+            </div>
+            <div class="quote-grid">
+              <div class="quote-box bid-box">
+                <span>Bid</span>
+                <strong id="quote-bid">—</strong>
+                <small id="quote-bid-size">No active order</small>
+              </div>
+              <div class="quote-box ask-box">
+                <span>Ask</span>
+                <strong id="quote-ask">—</strong>
+                <small id="quote-ask-size">No active order</small>
+              </div>
+            </div>
+            <div class="controls-grid">
+              <label>Base notional per side (USD)
+                <input id="trade-size" type="number" min="10" max="10000" step="10" value="500" />
+              </label>
+              <label>Base quote offset (bps)
+                <input id="quote-offset" type="number" min="0" max="50" step="0.5" value="4" />
+              </label>
+              <label>Maximum absolute position (CL)
+                <input id="max-position" type="number" min="0.1" max="100" step="0.1" value="6" />
+              </label>
+            </div>
+            <div class="quote-impact-panel">
+              <div class="impact-title"><span class="stream-dot"></span> Model is affecting paper quotes <span id="quote-last-updated">Awaiting data</span></div>
+              <div class="impact-steps">
+                <span>Hormuz P <b id="quote-step-prob">—</b></span>
+                <span>Risk score <b id="quote-step-score">—</b></span>
+                <span>Bid offset <b id="quote-step-bid-offset">—</b></span>
+                <span>Ask offset <b id="quote-step-ask-offset">—</b></span>
+              </div>
+            </div>
+            <div class="quote-note">The live Hormuz score changes virtual quote size <em>and</em> distance. Inventory limits available virtual size. No orders are sent to an exchange.</div>
+          </section>
+
+          <section class="panel proxy-panel">
+            <div class="section-head">
+              <div>
+                <div class="panel-eyebrow">AUXILIARY MARKET PANEL</div>
+                <h2>Hyperliquid para:10Y component</h2>
+              </div>
+              <a class="soft-tag external-tag" href="https://app.hyperliquid.xyz/trade/para:10Y" target="_blank" rel="noopener noreferrer">Open para:10Y ↗</a>
+            </div>
+            <div class="proxy-layout">
+              <div class="proxy-main">
+                <div class="proxy-price-card">
+                  <small>Proxy monitor</small>
+                  <strong id="price-proxy">—</strong>
+                  <span id="para-status">Connecting to the public para:10Y order book…</span>
+                </div>
+                <div class="proxy-recent">
+                  <div class="proxy-mini-title">Read-only bond / rates reference</div>
+                  <ul>
+                    <li><b>10Y:</b> independently sampled public Hyperliquid market</li>
+                    <li><b>WTI:</b> the xyz:CL feed is used for virtual oil quotes</li>
+                    <li><b>Hormuz:</b> probabilities change paper quote size and distance</li>
+                  </ul>
+                </div>
+              </div>
+              <div class="proxy-orderbook">
+                <div class="book-head"><span>WTI price</span><span>Size</span><span>Total</span></div>
+                <div id="asks" class="book-side ask-side"></div>
+                <div class="spread-row"><span>Spread</span><strong id="spread">—</strong><small id="spread-bps">—</small></div>
+                <div id="bids" class="book-side bid-side"></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel portfolio-panel">
+            <div class="section-head">
+              <div>
+                <div class="panel-eyebrow">VIRTUAL ACCOUNT</div>
+                <h2>Portfolio + equity</h2>
+              </div>
+              <span class="soft-tag">SESSION PERFORMANCE</span>
+            </div>
+            <div class="stat-grid">
+              <article class="stat-card"><div class="stat-heading">Portfolio equity</div><div class="stat-value" id="equity">$10,000.00</div><div class="stat-foot">Virtual account balance</div></article>
+              <article class="stat-card"><div class="stat-heading">Total P&amp;L</div><div class="stat-value" id="pnl">$0.00</div><div class="stat-foot" id="pnl-sub">0.00% total return</div></article>
+              <article class="stat-card"><div class="stat-heading">Net exposure</div><div class="stat-value" id="position">0.000 <small>CL</small></div><div class="stat-foot" id="position-sub">No open position</div></article>
+              <article class="stat-card"><div class="stat-heading">Executed fills</div><div class="stat-value" id="fill-count">0</div><div class="stat-foot" id="fill-sub">Awaiting first paper trade</div></article>
+            </div>
+            <div class="mini-chart-wrap"><canvas id="equity-chart" role="img" aria-label="Virtual equity chart"></canvas></div>
+            <div class="equity-foot"><span>Starting capital <b>$10,000.00</b></span><span>Unrealized P&amp;L <b id="unrealized">$0.00</b></span><span>Simulated fees <b id="fees">$0.00</b></span></div>
+          </section>
+        </div>
+      </section>
+
+      <section class="bottom-grid" id="activity">
+        <article class="panel trade-history-panel">
+          <div class="section-head">
+            <div>
+              <div class="panel-eyebrow">EXECUTION AUDIT TRAIL</div>
+              <h2>Paper trade history</h2>
+            </div>
+            <div class="history-actions">
+              <button id="export-btn" class="btn-ghost" disabled>↓ Export CSV</button>
+              <button id="reset-btn" class="btn-danger">Reset account</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Time (UTC)</th><th>Side</th><th>Price</th><th>Size</th><th>Notional</th><th>Fee</th></tr>
+              </thead>
+              <tbody id="trade-rows">
+                <tr><td colspan="6" class="empty-trades">Your simulated fills will appear here when paper trading begins.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </article>
+
+        <article class="panel model-panel">
+          <div class="section-head">
+            <div>
+              <div class="panel-eyebrow">STRATEGY TRANSPARENCY</div>
+              <h2>Model monitor</h2>
+            </div>
+            <span class="soft-tag">BROWSER SIMULATION</span>
+          </div>
+          <div class="monitor-list">
+            <div class="monitor-row"><span>Hormuz probability signal</span><strong id="poly-model-value-duplicate">Live via formula panel</strong></div>
+            <div class="monitor-row"><span>WTI live source</span><strong>Hyperliquid public feed</strong></div>
+            <div class="monitor-row"><span>Execution mode</span><strong>Local paper fills only</strong></div>
+            <div class="monitor-row"><span>Private keys / wallet</span><strong>Not present</strong></div>
+          </div>
+          <p class="model-copy">
+            The original Python execution/ML engine is not running inside this public GitHub version.
+            However, the live Hormuz input <strong>does directly alter</strong> quote skew and quote distance in the quote engine.
+          </p>
+          <div class="api-footnote">Public endpoints in this app: <span class="mono">https://api.hyperliquid.xyz/info</span> · <span class="mono">wss://api.hyperliquid.xyz/ws</span> · <span class="mono">https://gamma-api.polymarket.com</span></div>
+        </article>
+      </section>
+
+      <footer class="footer-note">
+        <span>© <span id="year"></span> CrudeEdge / Handwritten Quant Notebook v1.4</span>
+        <span>No wallet · no secrets · no real orders</span>
+      </footer>
     </main>
   </div>
-  <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <dialog id="reset-modal"><form method="dialog" class="dialog-body"><div class="dialog-mark">↺</div><h2>Reset your paper account?</h2><p>This clears your locally stored simulated trades and resets capital to $10,000. This cannot be undone.</p><div class="dialog-actions"><button class="btn-secondary" value="cancel">Keep data</button><button id="confirm-reset" class="btn-danger" value="confirm">Reset account</button></div></form></dialog>
+
+  <div id="toast" class="toast" aria-live="polite"></div>
+
+  <dialog id="reset-modal" class="reset-modal">
+    <form method="dialog" class="reset-card">
+      <h3>Reset paper account?</h3>
+      <p>This clears the simulated position, P&amp;L and fill history and restores the account to $10,000.</p>
+      <menu>
+        <button value="cancel" class="btn-ghost">Cancel</button>
+        <button id="confirm-reset" value="default" class="btn-danger">Reset now</button>
+      </menu>
+    </form>
+  </dialog>
 </body>
 </html>

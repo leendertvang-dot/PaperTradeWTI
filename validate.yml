@@ -1,0 +1,24 @@
+name: Validate safe public paper trading app
+on:
+  push:
+  pull_request:
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check JS syntax and model
+        run: |
+          node --check app.js
+          node --check hormuz-signal.js
+          node --test tests/hormuz_signal.test.cjs
+      - name: Check public bundle safety
+        run: |
+          python tests/security_checks.py
+          python -m unittest discover -s tests -p "test_*.py"
