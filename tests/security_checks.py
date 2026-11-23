@@ -6,9 +6,9 @@ from pathlib import Path
 import re
 ROOT = Path(__file__).resolve().parents[1]
 expected = {
-    "index.html", "app.js", "hormuz-signal.js", "styles.css", "README.md", "AUDIT_REPORT.md",
+    "index.html", "app.js", "hormuz-signal.js", "rates-model.js", "styles.css", "README.md", "AUDIT_REPORT.md",
     "LICENSE", ".gitignore", ".nojekyll", "assets/favicon.svg", "assets/dashboard-preview.webp",
-    "tests/security_checks.py", "tests/test_snapshot.py", "tests/hormuz_signal.test.cjs", ".github/workflows/validate.yml",
+    "tests/security_checks.py", "tests/test_snapshot.py", "tests/hormuz_signal.test.cjs", "tests/rates_model.test.cjs", ".github/workflows/validate.yml",
     ".github/workflows/pages.yml", "scripts/build_site.py", "scripts/fetch_hormuz_snapshot.py"
 }
 actual = {p.relative_to(ROOT).as_posix() for p in ROOT.rglob('*') if p.is_file() and p.relative_to(ROOT).parts[0] not in ('dist','data','.git') and '__pycache__' not in p.relative_to(ROOT).parts}
@@ -20,14 +20,18 @@ assert 'Start Paper Trading' in html
 assert 'id="pencil-cursor"' in html and 'id="chart-pencil-live"' in html, 'Live pencil trace must remain in the page'
 assert 'id="input-hormuz"' in html and 'id="input-bid-offset"' in html, 'Live input decomposition required'
 assert "writeLive('quote-bid'" in js and "writeLive('quote-ask'" in js, 'Quote updates must be visibly animated'
-assert "coin: 'para:10Y'" in js, 'Public 10Y reference panel must be present'
+assert "coin: 'para:10Y'" in js or "RATE_MARKET = 'para:10Y'" in js, 'Public 10Y reference panel must be present'
 
 assert "wss://api.hyperliquid.xyz/ws" in js
 assert "https://api.hyperliquid.xyz/info" in js
 assert "https://gamma-api.polymarket.com" in model
 assert 'https://gamma-api.polymarket.com' in html
-assert 'HORMUZ.quoteTilt(s.poly.score' in js, 'Polymarket input must affect executed paper quoting'
+assert 'HORMUZ.quoteTilt(combinedScore()' in js, 'Hormuz and rate inputs must affect live paper quoting'
 assert 'readyToTrade()' in js and 'polyReady()' in js
+assert 'RATES.blendScores(s.poly.score, s.rate.score, s.settings.rateWeight)' in js
+assert 'id="math-s"' in html and 'id="math-bid"' in html, 'Mirrored Greek formula must be present'
+assert 'id="chart-hover-tooltip"' in html, 'Hover tooltip required'
+assert 'setInterval(() => {' in js and '}, 1000)' in js, 'One-second redraw required'
 assert 'xyz:CL' in js
 assert re.search(r"function executePaper\(", js), 'Paper fills must be simulated locally'
 for path in ROOT.rglob('*'):
