@@ -17,7 +17,8 @@ jobs:
         run: |
           node --check app.js
           node --check hormuz-signal.js
-          node --test tests/hormuz_signal.test.cjs
+          node --check rates-model.js
+          node --test tests/hormuz_signal.test.cjs tests/rates_model.test.cjs
       - name: Check public bundle safety
         run: |
           python tests/security_checks.py
