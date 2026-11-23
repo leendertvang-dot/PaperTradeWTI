@@ -10,6 +10,7 @@
   <link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="styles.css" />
   <script src="hormuz-signal.js" defer></script>
+  <script src="rates-model.js" defer></script>
   <script src="app.js" defer></script>
 </head>
 <body>
@@ -17,7 +18,7 @@
     <header class="notebook-topbar">
       <a href="#overview" class="brand brand-inline" data-nav="overview">
         <span class="brand-mark">∫</span>
-        <span class="brand-copy">PaperTradeWTI <small>Notebook edition / v1.4</small></span>
+        <span class="brand-copy">PaperTradeWTI <small>Notebook edition / v1.5</small></span>
       </a>
       <nav class="tabbar nav-links" aria-label="Primary navigation">
         <a href="#overview" class="nav-link active" data-nav="overview">Trading Dashboard</a>
@@ -37,7 +38,7 @@
           <div class="eyebrow-line">LIVE INPUTS → SIGNAL → QUOTES → PAPER FILLS</div>
           <h1>Live markets. <span>Pencil-drawn logic.</span></h1>
           <p>
-            Live Hyperliquid market data, live Hormuz probability input, and simulated bid/ask quotes that are
+            Live Hyperliquid market data, live Hormuz and US 10-year yield inputs, and simulated bid/ask quotes that are
             <strong>directly changed by the incoming data streams</strong>. This is a public paper-trading terminal — no private keys, no wallet, no real orders.
           </p>
           <div class="hero-badges">
@@ -57,7 +58,7 @@
 
       <div class="notice panel notice-panel">
         <span class="notice-icon">ⓘ</span>
-        <span><strong>Paper environment.</strong> Public prices come from Hyperliquid <code>xyz:CL</code>. The interface also shows a <strong>Hyperliquid para:10Y proxy component</strong> for monitoring context, while the live WTI quotes and virtual fills remain driven by the public WTI feed and the Polymarket Hormuz signal.</span>
+        <span><strong>Paper environment.</strong> Public prices come from Hyperliquid <code>xyz:CL</code>. The interface also shows a <strong>Hyperliquid para:10Y proxy component</strong> for monitoring context, while the live WTI quotes and virtual fills use the public WTI book, Hormuz probabilities and a tunable nominal US 10-year yield signal.</span>
         <button id="dismiss-notice" aria-label="Dismiss note">×</button>
       </div>
 
@@ -72,17 +73,18 @@
               <div class="head-side">
                 <span class="live-chip" id="chart-label">LIVE FEED</span>
                 <select id="chart-interval" class="thin-select" aria-label="Chart timeframe">
-                  <option value="1m">1 minute</option>
-                  <option value="5m" selected>5 minutes</option>
-                  <option value="15m">15 minutes</option>
-                  <option value="1h">1 hour</option>
+                  <option value="1m">Last 1 minute</option>
+                  <option value="5m" selected>Last 5 minutes</option>
+                  <option value="15m">Last 15 minutes</option>
+                  <option value="1h">Last 60 minutes</option>
                 </select>
               </div>
             </div>
             <div class="chart-header-row">
               <div>
-                <div class="market-title-line">WTI Crude Oil <span class="tag-perp">live paper market</span></div>
-                <div class="tiny-meta" id="chart-symbol">WTI / USDC · 5m</div>
+                <div class="market-title-line">WTI Crude Oil + U.S. 10Y Yield <span class="tag-perp">two live streams</span></div>
+                <div class="tiny-meta" id="chart-symbol">WTI / USD · synchronized live data · 10Y (%)</div>
+                <div class="chart-series-legend"><span class="legend-red">● WTI price · USD</span><span class="legend-blue">● U.S. 10Y yield · %</span><span id="rate-feed-label">Rate feed connecting</span></div>
               </div>
               <div class="live-price-cluster">
                 <div class="live-big"><span id="price">—</span> <span id="change" class="market-change">—</span></div>
@@ -100,13 +102,23 @@
                   <path d="M26 8 L89 8" stroke="#ffe19a" stroke-width="2" stroke-linecap="round" />
                 </svg>
               </div>
-              <div id="chart-pencil-live" class="chart-pencil-live">✎ Connecting to live price…</div>
-              <canvas id="price-chart" role="img" aria-label="WTI price chart"></canvas>
+              <div id="rate-pencil-cursor" class="pencil-cursor rate-pencil hidden" aria-hidden="true">
+                <svg viewBox="0 0 124 28" width="124" height="28" role="presentation">
+                  <rect x="5" y="5" width="94" height="18" rx="5" fill="#49a7dc" stroke="#2a5f91" stroke-width="1.6"/>
+                  <rect x="5" y="12" width="94" height="5" fill="#2272b2" opacity=".7" />
+                  <rect x="5" y="5" width="17" height="18" rx="3" fill="#8bc4e9" stroke="#2a5f91" stroke-width="1"/>
+                  <path d="M99 5 L121 14 L99 23 Z" fill="#d8b18a" stroke="#a77438" stroke-width="1.2"/>
+                  <path d="M114 11 L122 14 L114 17 Z" fill="#273344"/>
+                </svg>
+              </div>
+              <div id="chart-pencil-live" class="chart-pencil-live">✎ Red WTI + blue 10Y: redraw every second, data changes only on genuine market ticks</div>
+              <div id="chart-hover-tooltip" class="chart-hover-tooltip hidden" role="status" aria-live="off"></div>
+              <canvas id="price-chart" role="img" tabindex="0" aria-label="WTI crude oil price and U.S. 10-year Treasury yield chart. Hover or use arrow keys to inspect timestamped prices."></canvas>
               <div class="chart-empty" id="chart-empty">Connecting to Hyperliquid market data…</div>
             </div>
             <div class="chart-axis-note">
               <span id="chart-start">—</span>
-              <span>Hand-drawn graph-paper style · live data stream</span>
+              <span>1-second redraw · genuine 1m candle history + live quote samples · separate USD / % axes</span>
               <span id="chart-end">—</span>
             </div>
           </section>
@@ -139,32 +151,115 @@
                 <div class="input-row"><span>Book imbalance <i>OBI</i></span><strong id="input-obi">—</strong></div>
                 <div class="input-row"><span>Hormuz weighted YES <i>P</i></span><strong id="input-hormuz">—</strong></div>
                 <div class="input-row"><span>Probability change <i>ΔP</i></span><strong id="input-delta">—</strong></div>
-                <div class="input-row"><span>Oil-risk score <i>s</i></span><strong id="input-score">—</strong></div>
+                <div class="input-row"><span>Hormuz score <i>sₕ</i></span><strong id="input-score">—</strong></div>
+                <div class="input-row rate-row"><span>U.S. 10Y nominal yield <i>y₁₀</i></span><strong id="input-rate">—</strong></div>
+                <div class="input-row rate-row"><span>10Y change · ≤15m <i>Δy</i></span><strong id="input-rate-delta">—</strong></div>
+                <div class="input-row rate-row"><span>Yield score <i>sᵣ</i></span><strong id="input-rate-score">—</strong></div>
+                <div class="input-row rate-row"><span>Interest weight <i>wᵣ</i></span><strong id="input-rate-weight">20%</strong></div>
+                <div class="input-row output"><span>Composite quote score <i>s = (1−wᵣ)sₕ + wᵣsᵣ</i></span><strong id="input-combined-score">—</strong></div>
+                <div class="input-row"><span>Observed local oil–yield correlation <i>r</i></span><strong id="input-local-corr">—</strong></div>
                 <div class="input-row"><span>Virtual inventory <i>I</i></span><strong id="input-inventory">0.000 CL</strong></div>
                 <div class="input-row output"><span>Bid offset <i>bps</i></span><strong id="input-bid-offset">—</strong></div>
                 <div class="input-row output"><span>Ask offset <i>bps</i></span><strong id="input-ask-offset">—</strong></div>
                 <div class="input-row output"><span>Paper bid notional</span><strong id="input-bid-notional">—</strong></div>
                 <div class="input-row output"><span>Paper ask notional</span><strong id="input-ask-notional">—</strong></div>
               </div>
-              <div class="equation-strip">
-                <div class="equation-block">
-                  <span class="handnote">~ live formula ~</span>
-                  <span class="eq-title">Model logic</span>
-                  <p><strong>P</strong> = weighted Hormuz probability</p>
-                  <p><strong>s</strong> = signal from <span class="mono">P</span> and <span class="mono">ΔP</span></p>
-                  <p><strong>k</strong> = quote size / distance tilt from <span class="mono">s</span> (inventory affects capacity)</p>
-                  <p><strong>Bid / Ask</strong> = orderbook ± score-adjusted distance</p>
+              <section class="chalk-math-sheet" aria-labelledby="math-heading">
+                <div class="math-paper-head">
+                  <div>
+                    <span class="handnote math-tag">✎ model derivation</span>
+                    <h3 id="math-heading">The formula, then the live numbers</h3>
+                    <p>Symbols above. Their exact current values directly beneath. No look-ahead or invented market ticks.</p>
+                  </div>
+                  <div class="math-head-state"><span class="math-stamp" id="math-tick">WAITING FOR INPUTS</span><strong id="poly-model-value" class="math-model-readout">OFFLINE</strong></div>
                 </div>
-                <div class="equation-block emphasis">
-                  <span class="eq-title">Live engine reading</span>
-                  <p>Score now: <strong id="poly-model-value">OFFLINE</strong></p>
-                  <p>When score rises → bids get stronger / asks get lighter</p>
-                  <p>When score falls → bids widen / asks get stronger</p>
+                <div class="math-legend">
+                  <span><b class="math-ink-blue">P</b> Hormuz weighted YES probability</span>
+                  <span><b class="math-ink-blue">ΔP</b> change in that probability</span>
+                  <span><b class="math-ink-red">σₕ</b> Hormuz risk score</span>
+                  <span><b class="math-ink-blue">y₁₀</b> 10Y nominal yield (%)</span>
+                  <span><b class="math-ink-blue">Δyᵦₚ</b> 10Y change (basis points)</span>
+                  <span><b class="math-ink-red">σᵣ</b> interest-rate score</span>
+                  <span><b class="math-ink-blue">wᵣ</b> interest-rate weight</span>
+                  <span><b class="math-ink-red">σ</b> combined quote score</span>
+                  <span><b class="math-ink-blue">d₀</b> user base offset (bps)</span>
+                  <span><b class="math-ink-blue">B, A</b> live WTI best bid / ask</span>
+                  <span><b class="math-ink-blue">N₀</b> base per-side notional</span>
+                  <span><b class="math-ink-red">qᵦ, qₐ</b> hypothetical bid / ask price</span>
                 </div>
-              </div>
+                <div class="math-equations" aria-label="Mathematical formulas and synchronized evaluated values">
+                  <div class="math-equation">
+                    <div class="formula-symbolic">P = Σ(αᵢ · pᵢ) / Σαᵢ</div>
+                    <div class="formula-evaluated" id="math-p">—</div>
+                    <small>Weighted probabilities of active Hormuz deadlines</small>
+                  </div>
+                  <div class="math-equation">
+                    <div class="formula-symbolic">ΔP = Pₜ − P₀ (≤15m)</div>
+                    <div class="formula-evaluated" id="math-dp">—</div>
+                    <small>Change since the oldest observed sample (≤15 min)</small>
+                  </div>
+                  <div class="math-equation">
+                    <div class="formula-symbolic">σₕ = clip[¼(1 − 2P) + ¾ clip(−ΔP / 0.05)]</div>
+                    <div class="formula-evaluated" id="math-h">—</div>
+                    <small>Missing first ΔP is treated as zero, as in the trading code</small>
+                  </div>
+                  <div class="math-equation rate-formula">
+                    <div class="formula-symbolic">Δyᵦₚ = 100(yₜ − y₀)</div>
+                    <div class="formula-evaluated" id="math-y">—</div>
+                    <small>Yield quoted in percentage points · 0.01 pp = 1 bp</small>
+                  </div>
+                  <div class="math-equation rate-formula">
+                    <div class="formula-symbolic">σᵣ = clip(−Δyᵦₚ / 5)</div>
+                    <div class="formula-evaluated" id="math-r">—</div>
+                    <small>Negative response to yield increases · assumed 5 bp scale</small>
+                  </div>
+                  <div class="math-equation formula-highlight">
+                    <div class="formula-symbolic">σ = (1 − wᵣ) · σₕ + wᵣ · σᵣ</div>
+                    <div class="formula-evaluated" id="math-s">—</div>
+                    <small>One combined score directly changes both sides of the quote</small>
+                  </div>
+                  <div class="math-equation">
+                    <div class="formula-symbolic">dᵦ = d₀ + 3 max(0, −σ)</div>
+                    <div class="formula-evaluated" id="math-db">—</div>
+                    <small>Buy-side quote distance · basis points</small>
+                  </div>
+                  <div class="math-equation">
+                    <div class="formula-symbolic">dₐ = d₀ + 3 max(0, σ)</div>
+                    <div class="formula-evaluated" id="math-da">—</div>
+                    <small>Sell-side quote distance · basis points</small>
+                  </div>
+                  <div class="math-equation output-equation">
+                    <div class="formula-symbolic">qᵦ = B · (1 − dᵦ / 10⁴)</div>
+                    <div class="formula-evaluated" id="math-bid">—</div>
+                    <small>Calculated virtual bid; shown only while paper trading is running</small>
+                  </div>
+                  <div class="math-equation output-equation">
+                    <div class="formula-symbolic">qₐ = A · (1 + dₐ / 10⁴)</div>
+                    <div class="formula-evaluated" id="math-ask">—</div>
+                    <small>Calculated virtual ask; shown only while paper trading is running</small>
+                  </div>
+                  <div class="math-equation output-equation">
+                    <div class="formula-symbolic">Nᵦ = N₀ (1 + 0.6σ)</div>
+                    <div class="formula-evaluated" id="math-nb">—</div>
+                    <small>Target bid size (USD) before virtual cash/inventory limits</small>
+                  </div>
+                  <div class="math-equation output-equation">
+                    <div class="formula-symbolic">Nₐ = N₀ (1 − 0.6σ)</div>
+                    <div class="formula-evaluated" id="math-na">—</div>
+                    <small>Target ask size (USD) before inventory limits</small>
+                  </div>
+                </div>
+                <div class="math-final-row">
+                  <span>ACTUAL ACTIVE QUOTES →</span>
+                  <strong id="math-result-bid" class="math-result-buy">BID —</strong>
+                  <strong id="math-result-ask" class="math-result-sell">ASK —</strong>
+                  <span class="math-final-note">Potential size capped by balance and inventory · paper only</span>
+                </div>
+                <div class="math-literature">Research context: <a href="https://ideas.repec.org/a/spr/empeco/v53y2017i3d10.1007_s00181-016-1165-6.html" target="_blank" rel="noopener noreferrer">Huang, Mollick &amp; Nguyen (2017)</a> find historical correlations of <b>−0.089</b> and <b>−0.462</b> between oil and <b>real</b> interest rates in two periods. <a href="https://ideas.repec.org/a/eee/eneeco/v36y2013icp546-555.html" target="_blank" rel="noopener noreferrer">Arora &amp; Tanner (2013)</a> find sensitivity varies by rate measure/period. The 20% nominal 10Y weight and 5bp scale are <b>adjustable, uncalibrated research assumptions</b>, not estimated coefficients. Intrasecond nominal-perp quotes are not interchangeable with historical real rates.</div>
+              </section>
               <div class="poly-horizon-wrap" id="poly-horizons"><span class="poly-empty">Waiting for live probabilities…</span></div>
               <div class="math-flow">
-                <span class="math-chip">Live WTI book</span><b>+</b><span class="math-chip">Hormuz odds</span><b>→</b>
+                <span class="math-chip">Live WTI book</span><b>+</b><span class="math-chip">Hormuz odds</span><b>+</b><span class="math-chip rate-chip">10Y yield</span><b>→</b>
                 <span class="math-chip math-chip-special">Model score</span><b>→</b><span class="math-chip math-chip-positive">Paper bid / ask</span>
               </div>
               <div class="formula-footnote">
@@ -221,6 +316,11 @@
                 <small id="quote-ask-size">No active order</small>
               </div>
             </div>
+            <div class="rate-weight-control">
+              <label for="rate-weight">Nominal 10Y signal weight <strong id="rate-weight-display">20%</strong></label>
+              <input id="rate-weight" type="range" min="0" max="40" step="5" value="20" aria-label="10Y yield share of blended paper quote signal, percent" />
+              <small>20% = illustrative conservative starting setting, <b>not</b> a coefficient from a scientific paper. Hormuz receives the remaining 80%. Max 40%.</small>
+            </div>
             <div class="controls-grid">
               <label>Base notional per side (USD)
                 <input id="trade-size" type="number" min="10" max="10000" step="10" value="500" />
@@ -233,15 +333,16 @@
               </label>
             </div>
             <div class="quote-impact-panel">
-              <div class="impact-title"><span class="stream-dot"></span> Model is affecting paper quotes <span id="quote-last-updated">Awaiting data</span></div>
+              <div class="impact-title"><span class="stream-dot"></span> Hormuz + 10Y both affect paper quotes <span id="quote-last-updated">Awaiting data</span></div>
               <div class="impact-steps">
                 <span>Hormuz P <b id="quote-step-prob">—</b></span>
-                <span>Risk score <b id="quote-step-score">—</b></span>
+                <span>Combined score <b id="quote-step-score">—</b></span>
+                <span>10Y score <b id="quote-step-rate">—</b></span>
                 <span>Bid offset <b id="quote-step-bid-offset">—</b></span>
                 <span>Ask offset <b id="quote-step-ask-offset">—</b></span>
               </div>
             </div>
-            <div class="quote-note">The live Hormuz score changes virtual quote size <em>and</em> distance. Inventory limits available virtual size. No orders are sent to an exchange.</div>
+            <div class="quote-note">The blended Hormuz + U.S. 10Y yield score changes virtual quote size <em>and</em> distance. Inventory limits available virtual size. No orders are sent to an exchange.</div>
           </section>
 
           <section class="panel proxy-panel">
@@ -257,14 +358,15 @@
                 <div class="proxy-price-card">
                   <small>Proxy monitor</small>
                   <strong id="price-proxy">—</strong>
-                  <span id="para-status">Connecting to the public para:10Y order book…</span>
+                  <span id="para-status">Connecting to live para:10Y yields…</span>
                 </div>
                 <div class="proxy-recent">
-                  <div class="proxy-mini-title">Read-only bond / rates reference</div>
+                  <div class="proxy-mini-title">Live nominal yield input</div>
                   <ul>
-                    <li><b>10Y:</b> independently sampled public Hyperliquid market</li>
+                    <li><b>10Y:</b> read-only Hyperliquid stream, drives rate score</li>
                     <li><b>WTI:</b> the xyz:CL feed is used for virtual oil quotes</li>
-                    <li><b>Hormuz:</b> probabilities change paper quote size and distance</li>
+                    <li><b>10Y:</b> nominal yield changes affect quote size and distance</li>
+                    <li><b>Hormuz:</b> probabilities also affect quotes</li>
                   </ul>
                 </div>
               </div>
@@ -330,14 +432,13 @@
             <span class="soft-tag">BROWSER SIMULATION</span>
           </div>
           <div class="monitor-list">
-            <div class="monitor-row"><span>Hormuz probability signal</span><strong id="poly-model-value-duplicate">Live via formula panel</strong></div>
+            <div class="monitor-row"><span>Hormuz + rates blended signal</span><strong id="poly-model-value-duplicate">Live via formula panel</strong></div>
             <div class="monitor-row"><span>WTI live source</span><strong>Hyperliquid public feed</strong></div>
             <div class="monitor-row"><span>Execution mode</span><strong>Local paper fills only</strong></div>
             <div class="monitor-row"><span>Private keys / wallet</span><strong>Not present</strong></div>
           </div>
           <p class="model-copy">
-            The original Python execution/ML engine is not running inside this public GitHub version.
-            However, the live Hormuz input <strong>does directly alter</strong> quote skew and quote distance in the quote engine.
+            The original Python execution/ML engine is not running inside this public GitHub version. The nominal U.S. 10Y signal and Hormuz probability <strong>both directly alter</strong> virtual quote skew and distance. This 20% interest weighting is hypothetical, not statistically optimized or backtested.
           </p>
           <div class="api-footnote">Public endpoints in this app: <span class="mono">https://api.hyperliquid.xyz/info</span> · <span class="mono">wss://api.hyperliquid.xyz/ws</span> · <span class="mono">https://gamma-api.polymarket.com</span></div>
         </article>

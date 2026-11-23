@@ -6,14 +6,16 @@
   'use strict';
   const MARKET = 'xyz:CL';
   const DEX = 'xyz';
+  const RATE_MARKET = 'para:10Y';
   const INFO_URL = 'https://api.hyperliquid.xyz/info';
   const WS_URL = 'wss://api.hyperliquid.xyz/ws';
   const STORAGE_KEY = 'crudeedge-public-paper-v1';
   const HORMUZ = window.CrudeEdgeHormuz;
+  const RATES = window.CrudeEdgeRates;
   const POLY_STALE_MS = 120000; // Direct Gamma polling freshness.
   const POLY_GITHUB_STALE_MS = 45 * 60000; // GitHub Action schedule can be delayed.
   const POLY_POLL_MS = 30000;
-  if (!HORMUZ) throw new Error('Hormuz signal module failed to load. Trading is disabled.');
+  if (!HORMUZ || !RATES) throw new Error('Hormuz/rate model module missing. Trading is disabled.');
   const STARTING_CASH = 10000;
   const MAX_TRADES = 500;
   const $ = (id) => document.getElementById(id);
@@ -28,7 +30,8 @@
     price: NaN, prevDay: NaN, bestBid: NaN, bestAsk: NaN, orderbook: [[], []],
     quoteBid: NaN, quoteAsk: NaN, quoteQtyBid: 0, quoteQtyAsk: 0, quoteActivatedAt: 0,
     currentCandle: [], candles: [], interval: '5m', midHistory: [], seenTrades: new Set(), lastFillAt: 0,
-    paper: initialPaper(), settings: { notional: 200, offset: 0, maxPosition: 5 },
+    chartSamples: [], historyOil: [], historyYield: [], chartHover: -1, rate: { value: NaN, bid: NaN, ask: NaN, lastAt: 0, observations: [], deltaBps: NaN, score: NaN },
+    paper: initialPaper(), settings: { notional: 200, offset: 0, maxPosition: 5, rateWeight: RATES.DEFAULT_WEIGHT },
     poly: { ready: false, lastSuccess: 0, error: '', markets: [], composite: NaN,
       score: NaN, delta: NaN, identity: '', observations: [], source: '', mode: '', sourceAt: 0 }
   };
@@ -69,7 +72,16 @@
     writeLive('input-delta', validPoly && Number.isFinite(s.poly.delta) ? (s.poly.delta >= 0 ? '+' : '') + fmt(s.poly.delta * 100, 2) + ' pp' : '—', validPoly ? s.poly.delta : NaN);
     writeLive('input-score', validPoly ? (s.poly.score >= 0 ? '+' : '') + fmt(s.poly.score, 3) : '—', validPoly ? s.poly.score : NaN);
     writeLive('input-inventory', fmt(s.paper.position, 3) + ' CL', s.paper.position);
-    const tilt = validPoly ? HORMUZ.quoteTilt(s.poly.score, s.settings.notional, s.settings.offset) : null;
+    const hasRate = rateReady();
+    const combined = combinedScore();
+    writeLive('input-rate', hasRate ? fmt(s.rate.value, 4) + '%' : '—', hasRate ? s.rate.value : NaN);
+    writeLive('input-rate-delta', hasRate ? (s.rate.deltaBps >= 0 ? '+' : '') + fmt(s.rate.deltaBps, 2) + ' bp' : '—', hasRate ? s.rate.deltaBps : NaN);
+    writeLive('input-rate-score', hasRate ? (s.rate.score >= 0 ? '+' : '') + fmt(s.rate.score, 3) : '—', hasRate ? s.rate.score : NaN);
+    writeLive('input-rate-weight', fmt(s.settings.rateWeight * 100, 0) + '%', s.settings.rateWeight);
+    writeLive('input-combined-score', Number.isFinite(combined) ? (combined >= 0 ? '+' : '') + fmt(combined, 3) : '—', combined);
+    const localCorr = RATES.observedCorrelation(s.chartSamples.slice(-600));
+    writeLive('input-local-corr', Number.isFinite(localCorr) ? fmt(localCorr, 3) + ' · exploratory' : '— · need paired ticks', localCorr);
+    const tilt = Number.isFinite(combined) ? HORMUZ.quoteTilt(combined, s.settings.notional, s.settings.offset) : null;
     const bidNotional = s.quoteQtyBid > 0 && Number.isFinite(s.quoteBid) ? s.quoteQtyBid * s.quoteBid : NaN;
     const askNotional = s.quoteQtyAsk > 0 && Number.isFinite(s.quoteAsk) ? s.quoteQtyAsk * s.quoteAsk : NaN;
     writeLive('input-bid-offset', tilt ? fmt(tilt.bidOffsetBps, 2) : '—', tilt?.bidOffsetBps);
@@ -77,12 +89,50 @@
     writeLive('input-bid-notional', Number.isFinite(bidNotional) ? dollars(bidNotional) : '—', bidNotional);
     writeLive('input-ask-notional', Number.isFinite(askNotional) ? dollars(askNotional) : '—', askNotional);
     writeLive('quote-step-prob', validPoly ? fmt(s.poly.composite * 100, 1) + '%' : '—', validPoly ? s.poly.composite : NaN);
-    writeLive('quote-step-score', validPoly ? (s.poly.score >= 0 ? '+' : '') + fmt(s.poly.score, 3) : '—', validPoly ? s.poly.score : NaN);
+    writeLive('quote-step-score', Number.isFinite(combined) ? (combined >= 0 ? '+' : '') + fmt(combined, 3) : '—', combined);
+    writeLive('quote-step-rate', hasRate ? (s.rate.score >= 0 ? '+' : '') + fmt(s.rate.score, 3) : '—', hasRate ? s.rate.score : NaN);
     writeLive('quote-step-bid-offset', tilt ? fmt(tilt.bidOffsetBps, 2) + ' bps' : '—', tilt?.bidOffsetBps);
     writeLive('quote-step-ask-offset', tilt ? fmt(tilt.askOffsetBps, 2) + ' bps' : '—', tilt?.askOffsetBps);
-    $('flow-feed-stamp').textContent = marketReady() && validPoly ? 'Both feeds current · ' + utc(Date.now()) + ' UTC' : 'Awaiting valid market feeds';
+    $('flow-feed-stamp').textContent = marketReady() && validPoly && hasRate ? 'All three feeds current · ' + utc(Date.now()) + ' UTC' : 'Awaiting WTI + Hormuz + 10Y feeds';
     $('quote-last-updated').textContent = s.running && readyToTrade() && s.quoteActivatedAt ?
       'updated ' + fmt((Date.now() - s.quoteActivatedAt) / 1000, 1) + 's ago' : 'Start paper trading to post virtual quotes';
+    renderMathNotebook();
+  }
+
+  // This is the same arithmetic used by computeQuotes(), shown term-by-term.
+  // The display is never an independent alternative "research-only" formula.
+  function renderMathNotebook() {
+    const okH = polyReady(), okR = rateReady();
+    const p = s.poly.composite, delta = s.poly.delta;
+    const safeTrend = Number.isFinite(delta) ? clamp(-delta / .05, -1, 1) : 0;
+    const h = s.poly.score, r = s.rate.score, w = s.settings.rateWeight;
+    const score = combinedScore();
+    const f = (x, digits = 4) => fmt(x, digits);
+    const signed = x => Math.abs(x)<0.000000001 ? f(0) : (x > 0 ? '+' : '') + f(x);
+    const value = (id, str, num = NaN) => writeLive(id, str, num);
+    const valid = okH && okR && Number.isFinite(score);
+    value('math-p', okH ? `( ${s.poly.markets.map(m => `${f(m.weight, 2)}×${f(m.p, 3)}`).join(' + ')} ) / ${f(s.poly.markets.reduce((z, m) => z + m.weight, 0), 2)} = ${f(p)}` : '— awaiting Hormuz deadlines', okH ? p : NaN);
+    const baseP = Number.isFinite(delta) ? p - delta : p;
+    value('math-dp', okH ? `${f(p)} − ${f(baseP)} = ${Number.isFinite(delta) ? signed(delta) : '0.0000 (initial baseline)'}` : '—', Number.isFinite(delta) ? delta : NaN);
+    value('math-h', okH ? `clip[0.25×(1−2×${f(p)}) + 0.75×${f(safeTrend)}] = ${signed(h)}` : '—', okH ? h : NaN);
+    const records = s.rate.observations;
+    const firstY = records.length ? records[0].v : NaN;
+    value('math-y', okR ? `100×(${f(s.rate.value, 4)} − ${f(firstY, 4)}) = ${signed(s.rate.deltaBps)} bp` : '— awaiting live 10Y yield', okR ? s.rate.deltaBps : NaN);
+    value('math-r', okR ? `clip(−${f(s.rate.deltaBps, 3)} / 5) = ${signed(r)}` : '—', okR ? r : NaN);
+    value('math-s', valid ? `(${f(1-w,2)}×${f(h)}) + (${f(w,2)}×${f(r)}) = ${signed(score)}` : '— three fresh inputs required', score);
+    const tilt = valid ? HORMUZ.quoteTilt(score, s.settings.notional, s.settings.offset) : null;
+    const d0 = s.settings.offset;
+    value('math-db', tilt ? `${f(d0,2)} + 3×${f(Math.max(0,-score),4)} = ${f(tilt.bidOffsetBps,3)} bps` : '—', tilt?.bidOffsetBps);
+    value('math-da', tilt ? `${f(d0,2)} + 3×${f(Math.max(0,score),4)} = ${f(tilt.askOffsetBps,3)} bps` : '—', tilt?.askOffsetBps);
+    const quoteValid = s.running && readyToTrade() && tilt;
+    value('math-bid', quoteValid ? `${f(s.bestBid,3)} × (1 − ${f(tilt.bidOffsetBps,3)}/10,000) = $${f(s.quoteBid,3)}` : '— start paper trading for a live quote', quoteValid ? s.quoteBid : NaN);
+    value('math-ask', quoteValid ? `${f(s.bestAsk,3)} × (1 + ${f(tilt.askOffsetBps,3)}/10,000) = $${f(s.quoteAsk,3)}` : '— start paper trading for a live quote', quoteValid ? s.quoteAsk : NaN);
+    value('math-nb', tilt ? `${f(s.settings.notional,2)} × (1 + 0.6×${f(score)}) = ${dollars(tilt.bidNotional)}` : '—', tilt?.bidNotional);
+    value('math-na', tilt ? `${f(s.settings.notional,2)} × (1 − 0.6×${f(score)}) = ${dollars(tilt.askNotional)}` : '—', tilt?.askNotional);
+    value('math-result-bid', quoteValid && s.quoteQtyBid > 0 ? `BID $${f(s.quoteBid,3)} / ${f(s.quoteQtyBid,3)} CL` : 'BID —', s.quoteBid);
+    value('math-result-ask', quoteValid && s.quoteQtyAsk > 0 ? `ASK $${f(s.quoteAsk,3)} / ${f(s.quoteQtyAsk,3)} CL` : 'ASK —', s.quoteAsk);
+    $('math-tick').textContent = valid ? `LIVE · ${utc(Date.now())} UTC` : 'WAITING FOR FRESH INPUTS';
+    writeLive('poly-model-value',valid?signed(score):'OFFLINE',valid?score:NaN);
   }
 
   function toast(message) {
@@ -104,10 +154,14 @@
         s.settings.notional = clamp(nnum(stored.settings.notional) || 200, 10, 10000);
         s.settings.offset = clamp(nnum(stored.settings.offset) || 0, 0, 50);
         s.settings.maxPosition = clamp(nnum(stored.settings.maxPosition) || 5, .1, 100);
+        const savedWeight = nnum(stored.settings.rateWeight);
+        s.settings.rateWeight = Number.isFinite(savedWeight) ? clamp(savedWeight, 0, RATES.MAX_WEIGHT) : RATES.DEFAULT_WEIGHT;
       }
       $('trade-size').value = s.settings.notional;
       $('quote-offset').value = s.settings.offset;
       $('max-position').value = s.settings.maxPosition;
+      $('rate-weight').value = String(Math.round(s.settings.rateWeight * 100));
+      $('rate-weight-display').textContent = fmt(s.settings.rateWeight * 100, 0) + '%';
     } catch { /* Storage is optional. */ }
   }
   function savePaper() {
@@ -138,11 +192,17 @@
       s.poly.sourceAt > 0 && Date.now() - s.poly.sourceAt >= -60000 &&
       Date.now() - s.poly.sourceAt < maxAge;
   }
-  function readyToTrade() { return marketReady() && polyReady(); }
+  function rateReady() {
+    return s.connected && Number.isFinite(s.rate.value) && s.rate.value > 0 && Number.isFinite(s.rate.score) &&
+      Date.now() - s.rate.lastAt >= -1000 && Date.now() - s.rate.lastAt < 60000;
+  }
+  function combinedScore() { return rateReady() && polyReady() ? RATES.blendScores(s.poly.score, s.rate.score, s.settings.rateWeight) : NaN; }
+  function readyToTrade() { return marketReady() && polyReady() && rateReady() && Number.isFinite(combinedScore()); }
   function updateStartAvailability() {
     $('start-btn').disabled = !readyToTrade();
     const waiting = !marketReady() ? 'Waiting for live Hyperliquid WTI book' :
-      !polyReady() ? 'Waiting for live Polymarket Hormuz snapshot' : 'Both market feeds ready · paper trades only';
+      !polyReady() ? 'Waiting for live Polymarket Hormuz snapshot' :
+      !rateReady() ? 'Waiting for live Hyperliquid para:10Y yield' : 'All three inputs ready · paper trades only';
     $('start-requirement').textContent = s.running ? 'Simulated orders only · no wallet or private keys' : waiting;
   }
   function setRunning(running) {
@@ -154,7 +214,7 @@
     $('engine-status').classList.toggle('running', running);
     $('engine-indicator').innerHTML = running ? '<span>●</span> ACTIVE' : '<span>●</span> IDLE';
     $('engine-indicator').classList.toggle('running', running);
-    ['trade-size', 'quote-offset', 'max-position', 'chart-interval'].forEach(id => { if (id !== 'chart-interval') $(id).disabled = running; });
+    ['trade-size', 'quote-offset', 'max-position', 'rate-weight', 'chart-interval'].forEach(id => { if (id !== 'chart-interval') $(id).disabled = running; });
     computeQuotes();
   }
   function validateSettings() {
@@ -162,17 +222,20 @@
     if (![notional, offset, maxPosition].every(Number.isFinite) || notional < 10 || notional > 10000 || offset < 0 || offset > 50 || maxPosition < .1 || maxPosition > 100) {
       toast('Invalid settings. Check the allowed ranges.'); return false;
     }
-    s.settings = { notional, offset, maxPosition }; savePaper(); return true;
+    const rateWeight = nnum($('rate-weight').value) / 100;
+    if (!Number.isFinite(rateWeight) || rateWeight < 0 || rateWeight > RATES.MAX_WEIGHT) { toast('Interest weight must be 0–40%.'); return false; }
+    s.settings = { notional, offset, maxPosition, rateWeight };
+    $('rate-weight-display').textContent = fmt(rateWeight * 100, 0) + '%';
+    savePaper(); computeQuotes(); return true;
   }
   function computeQuotes() {
     const prior = [s.quoteBid, s.quoteAsk, s.quoteQtyBid, s.quoteQtyAsk];
     s.quoteBid = NaN; s.quoteAsk = NaN; s.quoteQtyBid = 0; s.quoteQtyAsk = 0;
     if (s.running && readyToTrade()) {
       const { notional, offset, maxPosition } = s.settings;
-      // The live Polymarket score is a DIRECT INPUT to both quoting price and size.
-      // Score > 0: bigger/more aggressive bid, smaller/wider ask (bullish oil-risk bias).
-      // Score < 0: smaller/wider bid, bigger/more aggressive ask.
-      const tilt = HORMUZ.quoteTilt(s.poly.score, notional, offset);
+      // Both Hormuz and observed nominal 10Y yield movements feed the SAME live
+      // paper quote formula. 20% is a tunable heuristic, NOT a literature estimate.
+      const tilt = HORMUZ.quoteTilt(combinedScore(), notional, offset);
       const bid = s.bestBid * (1 - tilt.bidOffsetBps / 10000);
       const ask = s.bestAsk * (1 + tilt.askOffsetBps / 10000);
       const bidSize = tilt.bidNotional / bid, askSize = tilt.askNotional / ask;
@@ -319,7 +382,8 @@
     writeLive('poly-score', p.ready ? (p.score >= 0 ? '+' : '') + fmt(p.score, 3) : '—', p.score);
     const side = !p.ready ? '—' : p.score > 0.05 ? 'BULLISH WTI' : p.score < -0.05 ? 'BEARISH WTI' : 'NEUTRAL';
     $('poly-skew').textContent = live ? side : 'PAUSED / UNAVAILABLE';
-    $('poly-model-value').textContent = live ? (p.score >= 0 ? '+' : '') + fmt(p.score, 3) : 'OFFLINE';
+    const both = combinedScore();
+    $('poly-model-value').textContent = Number.isFinite(both) ? (both >= 0 ? '+' : '') + fmt(both, 3) : 'OFFLINE';
     for (const id of ['poly-score','poly-skew','poly-model-value']) {
       $(id).classList.toggle('bullish', live && p.score > 0.05);
       $(id).classList.toggle('bearish', live && p.score < -0.05);
@@ -405,21 +469,38 @@
       return response.json();
     } finally { clearTimeout(timeout); }
   }
+  function onRateBook(data) {
+    const levels = data?.levels;
+    const bid = nnum(levels?.[0]?.[0]?.px), ask = nnum(levels?.[1]?.[0]?.px);
+    if (!(bid > 0 && ask >= bid)) return;
+    const mid = (bid + ask) / 2;
+    const now = Date.now();
+    s.rate.bid = bid; s.rate.ask = ask; s.rate.value = mid; s.rate.lastAt = now;
+    const records = s.rate.observations;
+    // Only record genuinely changed quotes as a new economic observation.
+    if (!records.length || records.at(-1).v !== mid) records.push({ t: now, v: mid });
+    while (records.length > 1 && records[0].t < now - RATES.WINDOW_MS) records.shift();
+    if (records.length > 900) records.splice(0, records.length - 900);
+    const model = RATES.rateSignal(records, now);
+    s.rate.deltaBps = model.deltaBps; s.rate.score = model.score;
+    writeLive('price-proxy', fmt(mid, 4) + '%', mid);
+    $('para-status').textContent = 'Live U.S. 10Y yield · bid ' + fmt(bid, 4) + '% / ask ' + fmt(ask, 4) + '% · ' + utc(now) + ' UTC';
+    $('rate-feed-label').textContent = '10Y tick ' + utc(now) + ' UTC';
+    updateStartAvailability(); computeQuotes(); drawPrice();
+  }
   async function fetchTenY() {
-    // This is deliberately separate from xyz:CL. It is a public reference panel,
-    // not a synthetic WTI price and not an order/execution connection.
+    // A periodic safety fallback; one-second redraw does NOT mean one-second HTTP polling.
+    // WebSocket l2Book is the primary low-latency source of genuine quote events.
+    if (Date.now() - s.rate.lastAt < 12000) return;
     try {
-      const result = await info({ type: 'l2Book', coin: 'para:10Y' });
-      const levels = result?.levels;
-      const bid = nnum(levels?.[0]?.[0]?.px), ask = nnum(levels?.[1]?.[0]?.px);
-      if (!(bid > 0 && ask >= bid)) throw new Error('No active 10Y bid/ask');
-      const mid = (bid + ask) / 2;
-      writeLive('price-proxy', fmt(mid, 4), mid);
-      $('para-status').textContent = 'Public para:10Y order book · bid ' + fmt(bid, 4) + ' / ask ' + fmt(ask, 4) + ' · ' + utc(Date.now()) + ' UTC';
+      const result = await info({ type: 'l2Book', coin: RATE_MARKET });
+      onRateBook(result);
     } catch (err) {
-      writeLive('price-proxy', '—');
-      $('para-status').textContent = 'para:10Y quote unavailable · visit Hyperliquid ↗';
-      console.warn('Public 10Y reference unavailable:', String(err?.message || err));
+      if (!rateReady()) {
+        $('para-status').textContent = '10Y quote unavailable or stale; paper trading blocked';
+        $('rate-feed-label').textContent = '10Y feed stale';
+      }
+      console.warn('Public 10Y yield unavailable:', String(err?.message || err));
     }
   }
   async function fetchContext() {
@@ -442,24 +523,23 @@
     } catch (err) { console.warn('Public market snapshot unavailable:', err.message); }
   }
   function compactUsd(n) { if (!Number.isFinite(n)) return '—'; return n >= 1e9 ? '$' + fmt(n / 1e9, 2) + 'B' : n >= 1e6 ? '$' + fmt(n / 1e6, 2) + 'M' : n >= 1e3 ? '$' + fmt(n / 1e3, 1) + 'K' : '$' + fmt(n, 0); }
-  async function fetchCandles() {
-    const interval = s.interval;
-    const now = Date.now(), duration = ({'1m':60000,'5m':300000,'15m':900000,'1h':3600000})[interval];
-    $('chart-empty').textContent = 'Loading WTI historical candles…';
-    try {
-      const candles = await info({ type: 'candleSnapshot', req: { coin: MARKET, interval, startTime: now - duration * 100, endTime: now } });
-      if (interval !== s.interval) return;
-      if (Array.isArray(candles)) {
-        s.candles = candles.map(c => ({ t: nnum(c.t), o: nnum(c.o), h: nnum(c.h), l: nnum(c.l), c: nnum(c.c) }))
-          .filter(c => [c.t, c.o, c.h, c.l, c.c].every(Number.isFinite) && c.c > 0).slice(-100);
-      }
-      $('chart-empty').classList.toggle('hidden', s.candles.length > 0);
-      if (!s.candles.length) $('chart-empty').textContent = 'Historical candles currently unavailable. Live ticks will appear here.';
-      drawPrice();
-    } catch (err) {
-      $('chart-empty').textContent = 'Candles unavailable; live ticks may still work.';
-      console.warn('Public historical candles unavailable:', err.message);
-    }
+  async function fetchDualHistory() {
+    // Historical *actual* 1-minute closes for both instruments. These timestamps
+    // are plotted alongside the one-second latest-quote samples, never interpolated.
+    const now = Date.now();
+    const startTime = now - 65 * 60000;
+    const load = async (coin) => {
+      const raw = await info({ type: 'candleSnapshot', req: { coin, interval: '1m', startTime, endTime: now } });
+      if (!Array.isArray(raw)) return [];
+      return raw.map(x=>({t:nnum(x.t), v:nnum(x.c)}))
+        .filter(x=>Number.isFinite(x.t) && Number.isFinite(x.v) && x.v>0 && x.t<=now && x.t>=startTime)
+        .sort((a,b)=>a.t-b.t).slice(-65);
+    };
+    const results=await Promise.allSettled([load(MARKET),load(RATE_MARKET)]);
+    if(results[0].status==='fulfilled' && results[0].value.length) s.historyOil=results[0].value;
+    if(results[1].status==='fulfilled' && results[1].value.length) s.historyYield=results[1].value;
+    if(results.some(x=>x.status==='rejected')) console.info('One or both historical candle feeds unavailable: live 1-second quotes still work.');
+    drawPrice();
   }
   function connect() {
     if (s.ws && (s.ws.readyState === WebSocket.CONNECTING || s.ws.readyState === WebSocket.OPEN)) return;
@@ -468,7 +548,7 @@
       const ws = new WebSocket(WS_URL); s.ws = ws;
       ws.onopen = () => {
         s.reconnectAttempts = 0;
-        for (const subscription of [{ type: 'l2Book', coin: MARKET }, { type: 'trades', coin: MARKET }, { type: 'allMids', dex: DEX }]) {
+        for (const subscription of [{ type: 'l2Book', coin: MARKET }, { type: 'trades', coin: MARKET }, { type: 'allMids', dex: DEX }, { type: 'l2Book', coin: RATE_MARKET }]) {
           ws.send(JSON.stringify({ method: 'subscribe', subscription }));
         }
       };
@@ -484,6 +564,7 @@
             updateStartAvailability();
           }
         }
+        if (msg.channel === 'l2Book' && msg.data?.coin === RATE_MARKET) onRateBook(msg.data);
         if (msg.channel === 'allMids') {
           const mids = msg.data?.mids;
           const px = nnum(mids?.[MARKET] ?? mids?.CL);
@@ -513,83 +594,143 @@
     const ctx = canvas.getContext('2d'); ctx.scale(dpr, dpr);
     return { ctx, w: rect.width, h: rect.height };
   }
+  const CHART_WINDOWS = { '1m': 60_000, '5m': 300_000, '15m': 900_000, '1h': 3_600_000 };
+  let lastChartView = null;
+  function sampleChart() {
+    // Every second records the newest ACTUAL observed quote, with original event
+    // timestamps. Unchanged quotes are explicitly held, not invented ticks.
+    const now = Date.now();
+    const freshOil = marketReady() && Date.now()-s.lastFeed < 30000;
+    const freshYield = rateReady();
+    if (!freshOil && !freshYield) return;
+    const obs = { t: now, oil: freshOil ? mark() : NaN,
+      yield: freshYield ? s.rate.value : NaN,
+      oilAt: freshOil ? s.lastFeed : 0, yieldAt: freshYield ? s.rate.lastAt : 0 };
+    s.chartSamples.push(obs);
+    while (s.chartSamples.length > 3600) s.chartSamples.shift();
+    $('chart-empty').classList.add('hidden');
+  }
+  function chartTimeLabel(t) {
+    return new Date(t).toLocaleTimeString('en-GB', {timeZone:'UTC', hour12:false});
+  }
+  function setupChartHover() {
+    const canvas = $('price-chart');
+    function move(clientX) {
+      if (!lastChartView?.data?.length) return;
+      const box = canvas.getBoundingClientRect();
+      const x = clientX - box.left;
+      const v = lastChartView;
+      const target = v.start + clamp((x-v.left)/v.width, 0, 1)*(v.end-v.start);
+      let chosen = v.data[0]; let d = Infinity;
+      for (const point of v.data) { const nd = Math.abs(point.t-target); if (nd<d) { chosen=point; d=nd; } }
+      s.chartHover = chosen.t;
+      drawPrice();
+    }
+    canvas.addEventListener('pointermove', ev => move(ev.clientX));
+    canvas.addEventListener('pointerleave', () => { s.chartHover = -1; $('chart-hover-tooltip').classList.add('hidden'); drawPrice(); });
+    canvas.addEventListener('focus', () => {
+      if (lastChartView?.data?.length) { s.chartHover = lastChartView.data.at(-1).t; drawPrice(); }
+    });
+    canvas.addEventListener('blur', () => { s.chartHover = -1; $('chart-hover-tooltip').classList.add('hidden'); drawPrice(); });
+    canvas.addEventListener('keydown', ev => {
+      if (!['ArrowLeft','ArrowRight','Escape'].includes(ev.key)) return;
+      ev.preventDefault();
+      if (ev.key === 'Escape') { s.chartHover = -1; $('chart-hover-tooltip').classList.add('hidden'); drawPrice(); return; }
+      const pts = lastChartView?.data || []; if (!pts.length) return;
+      const currentIndex = pts.findIndex(x => x.t === s.chartHover);
+      const index = currentIndex < 0 ? pts.length-1 : clamp(currentIndex + (ev.key==='ArrowLeft'?-1:1),0,pts.length-1);
+      s.chartHover = pts[index].t; drawPrice();
+    });
+  }
   function drawPrice() {
     const frame = setupCanvas('price-chart'); if (!frame) return;
     const { ctx, w, h } = frame;
-    const left = 26, right = 74, top = 42, bottom = 35;
-    const pw = Math.max(30, w - left - right), ph = Math.max(30, h - top - bottom);
-    const candles = s.candles.slice(-78);
-    const ticks = s.midHistory.slice(-110);
-    // Historical candle CLOSES; no fabricated interpolation or synthetic ticks.
-    const series = candles.map(c => ({ t: c.t, v: c.c }));
-    if (series.length && Number.isFinite(mark())) {
-      series[series.length - 1] = { ...series[series.length - 1], v: mark() };
-    } else if (!series.length) {
-      series.push(...ticks);
+    const left=74, right=79, top=46, bottom=45;
+    const width=Math.max(50,w-left-right), height=Math.max(50,h-top-bottom);
+    const end=Date.now(), span=CHART_WINDOWS[s.interval] || 300000, start=end-span;
+    const live=s.chartSamples.filter(x=>x.t>=start && x.t<=end);
+    const oilPoints=[...s.historyOil.filter(x=>x.t>=start&&x.t<=end).map(x=>({t:x.t,oil:x.v})),
+       ...live.filter(x=>Number.isFinite(x.oil)).map(x=>({t:x.t,oil:x.oil}))].sort((a,b)=>a.t-b.t);
+    const yieldPoints=[...s.historyYield.filter(x=>x.t>=start&&x.t<=end).map(x=>({t:x.t,yield:x.v})),
+       ...live.filter(x=>Number.isFinite(x.yield)).map(x=>({t:x.t,yield:x.yield}))].sort((a,b)=>a.t-b.t);
+    // Aligned tooltip inputs: as-of last genuine quote at or before each timestamp.
+    const times=[...new Set([...oilPoints.map(x=>x.t),...yieldPoints.map(x=>x.t)])].sort((a,b)=>a-b);
+    let oi=-1,ri=-1;
+    const data=times.map(t=>{
+      while(oi+1<oilPoints.length&&oilPoints[oi+1].t<=t) oi++;
+      while(ri+1<yieldPoints.length&&yieldPoints[ri+1].t<=t) ri++;
+      return {t,oil:oi>=0?oilPoints[oi].oil:NaN,yield:ri>=0?yieldPoints[ri].yield:NaN};
+    });
+    lastChartView={data,left,width,start,end};
+    const oil=oilPoints, rates=yieldPoints;
+    const oilValues=oil.map(x=>x.oil), yieldValues=rates.map(x=>x.yield);
+    function scale(vals, fallback, minPad) {
+      let lo=vals.length?Math.min(...vals):fallback, hi=vals.length?Math.max(...vals):fallback;
+      const pad=Math.max((hi-lo)*.22, minPad);
+      return {lo:lo-pad,hi:hi+pad,y:v=>top+(hi+pad-v)/(hi-lo+2*pad)*height};
     }
-    if (!series.length) { $('pencil-cursor').classList.add('hidden'); return; }
-    const values = candles.length ? candles.flatMap(c => [c.h,c.l]) : series.map(x => x.v);
-    if (!values.length) { $('pencil-cursor').classList.add('hidden'); return; }
-    let lo = Math.min(...values), hi = Math.max(...values);
-    const pad = Math.max((hi - lo) * .19, (lo || 1) * .00035);
-    lo -= pad; hi += pad;
-    const X = i => left + pw * i / Math.max(1, series.length - 1);
-    const Y = v => top + (hi - v) / (hi - lo) * ph;
-    // Notebook lines, mathematical axis ticks and one actual-price trace.
-    ctx.lineWidth = 1;
-    ctx.font = '11px ui-monospace, monospace';
-    ctx.textAlign = 'right';
-    ctx.fillStyle = '#58718a';
-    for (let i = 0; i <= 5; i++) {
-      const v = hi - (hi - lo) * i / 5;
-      const y = top + ph * i / 5;
-      ctx.strokeStyle = 'rgba(42,105,165,.17)';
-      ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(w - right + 12, y); ctx.stroke();
-      ctx.fillText(fmt(v, 2), w - 9, y + 3);
+    const oilAxis=scale(oilValues,mark() || 70,Math.max(.02,(mark()||70)*.0002));
+    const rateAxis=scale(yieldValues,s.rate.value || 4.5,.002);
+    const X=t=>left+clamp((t-start)/span,0,1)*width;
+    ctx.font='11px ui-monospace, monospace';
+    for(let i=0;i<=5;i++) {
+      const y=top+height*i/5;
+      ctx.strokeStyle='rgba(43,105,167,.16)';ctx.lineWidth=1;
+      ctx.beginPath();ctx.moveTo(left,y);ctx.lineTo(left+width,y);ctx.stroke();
+      const ov=oilAxis.hi+(oilAxis.lo-oilAxis.hi)*i/5;
+      const rv=rateAxis.hi+(rateAxis.lo-rateAxis.hi)*i/5;
+      ctx.textAlign='right';ctx.fillStyle='#a63148';ctx.fillText('$'+fmt(ov,2),left-7,y+4);
+      ctx.textAlign='left';ctx.fillStyle='#185eab';ctx.fillText(fmt(rv,3)+'%',left+width+8,y+4);
     }
-    for (let i = 0; i <= 6; i++) {
-      const x = left + pw * i / 6;
-      ctx.strokeStyle = 'rgba(42,105,165,.11)';
-      ctx.beginPath();ctx.moveTo(x,top);ctx.lineTo(x,top+ph);ctx.stroke();
+    for(let i=0;i<=5;i++) {
+      const x=left+width*i/5;
+      ctx.strokeStyle='rgba(43,105,167,.1)';ctx.beginPath();ctx.moveTo(x,top);ctx.lineTo(x,top+height);ctx.stroke();
+      ctx.textAlign='center';ctx.fillStyle='#58718a';
+      ctx.fillText(chartTimeLabel(start+span*i/5).slice(0,5),x,top+height+22);
     }
-    // Soft graph-pencil guide beneath the vivid red live trace.
-    if (series.length > 1) {
+    function trace(points, field, scaleFn, color) {
+      if (!points.length) return null;
       ctx.beginPath();
-      for (let i = 0; i < series.length; i++) {
-        const x = X(i), y = Y(series[i].v);
-        if (i === 0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
-      }
-      ctx.strokeStyle = 'rgba(177,66,79,.15)'; ctx.lineJoin = 'round'; ctx.lineCap='round'; ctx.lineWidth=8;ctx.stroke();
-      ctx.strokeStyle = '#c74252'; ctx.lineWidth = 3.1;ctx.stroke();
-      // A subtle close marker for each real observation, not fake candles.
-      ctx.fillStyle = 'rgba(199,66,82,.24)';
-      for (let i=0;i<series.length-1;i+=Math.max(1,Math.floor(series.length/35))) {
-        ctx.beginPath();ctx.arc(X(i),Y(series[i].v),1.6,0,Math.PI*2);ctx.fill();
-      }
+      for(let i=0;i<points.length;i++) {const x=X(points[i].t),y=scaleFn(points[i][field]);if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);}
+      ctx.lineCap='round';ctx.lineJoin='round';
+      ctx.strokeStyle=color==='oil'?'rgba(195,55,82,.12)':'rgba(26,104,185,.12)';ctx.lineWidth=7;ctx.stroke();
+      ctx.strokeStyle=color==='oil'?'#c74252':'#1c73c4';ctx.lineWidth=2.9;ctx.stroke();
+      const last=points.at(-1), x=X(last.t), y=scaleFn(last[field]);
+      ctx.fillStyle=color==='oil'?'#c74252':'#1c73c4';ctx.beginPath();ctx.arc(x,y,4.6,0,Math.PI*2);ctx.fill();
+      ctx.strokeStyle='#fff9ed';ctx.lineWidth=1.6;ctx.stroke();
+      return {x,y,last};
     }
-    const last = series[series.length-1], endpointX = X(series.length - 1), endpointY = Y(last.v);
-    const realFeed = Number.isFinite(mark()) && s.connected && Date.now() - s.lastFeed <= 30000;
-    ctx.setLineDash([5,5]);ctx.strokeStyle='rgba(197,65,81,.3)';ctx.lineWidth=1;
-    ctx.beginPath();ctx.moveTo(left, endpointY);ctx.lineTo(w-right+10, endpointY);ctx.stroke();ctx.setLineDash([]);
-    ctx.fillStyle = realFeed ? '#c74252' : '#7e91a0';
-    ctx.beginPath();ctx.arc(endpointX, endpointY, 5.2, 0,Math.PI*2);ctx.fill();
-    ctx.strokeStyle='rgba(255,255,255,.94)';ctx.lineWidth=2;ctx.stroke();
-    ctx.fillStyle='rgba(255,244,226,.96)';ctx.fillRect(w-right+14,endpointY-11,58,23);
-    ctx.fillStyle='#a82b41';ctx.font='bold 11px ui-monospace, monospace';ctx.textAlign='center';
-    ctx.fillText(fmt(last.v,2),w-right+43,endpointY+4);
-    $('chart-start').textContent = utc(series[0].t);
-    $('chart-end').textContent = utc(last.t);
-    const pencil = $('pencil-cursor');
-    if (realFeed && series.length > 1) {
-      pencil.style.left = Math.round(endpointX - 122) + 'px';
-      pencil.style.top = Math.round(endpointY - 14) + 'px';
-      pencil.style.transform = 'rotate(' + clamp((series.at(-1).v - series.at(-2).v) / Math.max(.001, (hi - lo)) * -26, -18, 18) + 'deg)';
-      pencil.classList.remove('hidden');
-      $('chart-pencil-live').textContent = '✎ Pencil tracing live WTI · ' + utc(Date.now()) + ' UTC';
-    } else {
-      pencil.classList.add('hidden');
-      $('chart-pencil-live').textContent = '✎ Historic WTI trace · live feed waiting';
+    const oilEnd=trace(oil,'oil',oilAxis.y,'oil');
+    const yieldEnd=trace(rates,'yield',rateAxis.y,'rate');
+    function cursor(id, point, valid) {
+      const el=$(id);
+      if(point && valid) {
+        el.style.left=(point.x-122)+'px';el.style.top=(point.y-14)+'px';
+        el.classList.remove('hidden');
+      } else el.classList.add('hidden');
     }
+    cursor('pencil-cursor',oilEnd,marketReady());
+    cursor('rate-pencil-cursor',yieldEnd,rateReady());
+    $('chart-pencil-live').textContent='✎ One-second redraw · red WTI ($) · blue 10Y (%) · only real quotes change';
+    $('chart-start').textContent=chartTimeLabel(start)+' UTC';
+    $('chart-end').textContent=chartTimeLabel(end)+' UTC';
+    // Tooltips and crosshair use the exact recorded sampled quote and its event timestamp.
+    const tooltip=$('chart-hover-tooltip');
+    const closest=s.chartHover>=0&&data.length ? data.reduce((best,p)=>Math.abs(p.t-s.chartHover)<Math.abs(best.t-s.chartHover)?p:best,data[0]) : null;
+    if(closest) {
+      const x=X(closest.t);
+      ctx.setLineDash([4,5]);ctx.strokeStyle='rgba(18,55,84,.5)';ctx.lineWidth=1;
+      ctx.beginPath();ctx.moveTo(x,top);ctx.lineTo(x,top+height);ctx.stroke();ctx.setLineDash([]);
+      for(const [field,axis,color] of [['oil',oilAxis,'#c74252'],['yield',rateAxis,'#1c73c4']]) {
+        if (!Number.isFinite(closest[field])) continue;
+        ctx.fillStyle=color;ctx.beginPath();ctx.arc(x,axis.y(closest[field]),5,0,Math.PI*2);ctx.fill();
+      }
+      tooltip.textContent=`${chartTimeLabel(closest.t)} UTC · WTI: ${Number.isFinite(closest.oil)?'$'+fmt(closest.oil,3):'—'} · 10Y: ${Number.isFinite(closest.yield)?fmt(closest.yield,4)+'%':'—'} · last observed at/as-of time`;
+      tooltip.style.left=clamp(x-120,8,w-265)+'px';
+      tooltip.style.top=Math.max(8,top-31)+'px';
+      tooltip.classList.remove('hidden');
+    } else tooltip.classList.add('hidden');
+    $('chart-empty').classList.toggle('hidden',data.length>0);
   }
   function drawEquity() {
     const frame = setupCanvas('equity-chart'); if (!frame) return;
@@ -626,6 +767,7 @@
         updateStartAvailability();
         if (s.ws?.readyState === WebSocket.OPEN) s.ws.close();
       }
+      sampleChart(); drawPrice();
       if (s.running && !readyToTrade()) {
         setRunning(false); toast('A required market-data feed is stale. Paper trading paused.');
       }
@@ -636,7 +778,7 @@
       if (s.running) { snapshotEquity(); renderSummary();drawEquity(); }
     }, 1000);
     $('start-btn').addEventListener('click', () => {
-      if (!readyToTrade()) return toast('Live Hyperliquid and Polymarket Hormuz data are both required.');
+      if (!readyToTrade()) return toast('Live WTI, Polymarket Hormuz and para:10Y data are all required.');
       if (!validateSettings()) return;
       s.lastFillAt = Date.now(); setRunning(true); toast('Paper trading started. No real orders can be placed.');
     });
@@ -647,17 +789,21 @@
     });
     $('export-btn').addEventListener('click', downloadCsv);
     $('dismiss-notice').addEventListener('click', () => { $('dismiss-notice').parentElement.remove(); });
-    $('chart-interval').addEventListener('change', ev => { s.interval = ev.target.value; s.candles = []; $('chart-symbol').textContent = `WTI / USDC · ${s.interval}`; fetchCandles(); });
+    $('chart-interval').addEventListener('change', ev => { s.interval = ev.target.value; $('chart-symbol').textContent = `WTI / USD · last ${s.interval} · 10Y yield (%)`; drawPrice(); });
+    $('rate-weight').addEventListener('input', ev => { s.settings.rateWeight = clamp(nnum(ev.target.value) / 100, 0, RATES.MAX_WEIGHT); $('rate-weight-display').textContent = fmt(s.settings.rateWeight * 100,0) + '%'; computeQuotes(); });
+    $('rate-weight').addEventListener('change', () => { savePaper(); });
     ['trade-size','quote-offset','max-position'].forEach(id => $(id).addEventListener('change', validateSettings));
     const nav = Array.from(document.querySelectorAll('[data-nav]'));
     nav.forEach(a => a.addEventListener('click', () => { nav.forEach(x => x.classList.remove('active'));a.classList.add('active'); }));
+    setupChartHover();
     window.addEventListener('resize', () => { drawPrice(); drawEquity(); });
     window.addEventListener('beforeunload', savePaper);
-    connect();fetchContext();fetchCandles();fetchHormuz();fetchTenY();
+    sampleChart(); connect();fetchContext();fetchHormuz();fetchTenY();fetchDualHistory();
     setInterval(fetchHormuz, POLY_POLL_MS);
     setInterval(fetchContext, 45000);
-    setInterval(fetchTenY, 30000);
-    setInterval(fetchCandles, 180000);
+    setInterval(fetchTenY, 12000);
+    setInterval(fetchDualHistory, 120000);
+
   }
   init();
 })();
