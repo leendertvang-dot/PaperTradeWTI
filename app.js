@@ -30,12 +30,38 @@
     price: NaN, prevDay: NaN, bestBid: NaN, bestAsk: NaN, orderbook: [[], []],
     quoteBid: NaN, quoteAsk: NaN, quoteQtyBid: 0, quoteQtyAsk: 0, quoteActivatedAt: 0,
     currentCandle: [], candles: [], interval: '5m', midHistory: [], seenTrades: new Set(), lastFillAt: 0,
-    chartSamples: [], historyOil: [], historyYield: [], chartHover: -1, rate: { value: NaN, bid: NaN, ask: NaN, lastAt: 0, observations: [], deltaBps: NaN, score: NaN },
+    chartSamples: [], historyOil: [], historyYield: [], ticks: {oil: [], rate: []}, tickCounts: {oil: 0, rate: 0}, chartHover: -1, rate: { value: NaN, bid: NaN, ask: NaN, lastAt: 0, observations: [], deltaBps: NaN, score: NaN },
     paper: initialPaper(), settings: { notional: 200, offset: 0, maxPosition: 5, rateWeight: RATES.DEFAULT_WEIGHT },
     poly: { ready: false, lastSuccess: 0, error: '', markets: [], composite: NaN,
       score: NaN, delta: NaN, identity: '', observations: [], source: '', mode: '', sourceAt: 0 }
   };
   let toastTimer;
+  let pendingTickFrame = false;
+  // REAL public websocket ticks only. No setInterval() ever manufactures ticks.
+  // Receipt time is used only when the exchange's timestamp is absent/implausible.
+  function recordTick(which, price, source, exchangeTime) {
+    if (!['oil', 'rate'].includes(which) || !(Number.isFinite(price) && price > 0)) return;
+    const now = Date.now();
+    const xTime = Number(exchangeTime);
+    const t = Number.isFinite(xTime) && xTime > now - 30000 && xTime < now + 2000 ? xTime : now;
+    const list = s.ticks[which];
+    // Remove duplicate same-price events with same exchange millisecond & source.
+    if (list.length && list.at(-1).t === t && list.at(-1).v === price && list.at(-1).source === source) return;
+    list.push({t, v: price, source, receivedAt: now});
+    if (list.length > 12000) list.splice(0, list.length - 12000);
+    while (list.length > 1 && list[0].t < now - 60*60000) list.shift();
+    s.tickCounts[which]++;
+    const counter = $(which === 'oil' ? 'tick-count-oil' : 'tick-count-rate');
+    if (counter) counter.textContent = s.tickCounts[which].toLocaleString('en-US') + ' events';
+    const at = $(which === 'oil' ? 'oil-tick-age' : 'rate-tick-age');
+    if (at) at.textContent = source.toUpperCase() + ' · ' + utc(t);
+    scheduleTickRedraw();
+  }
+  function scheduleTickRedraw() {
+    if (pendingTickFrame) return;
+    pendingTickFrame = true;
+    window.requestAnimationFrame(() => { pendingTickFrame = false; drawPrice(); });
+  }
   // Accessibility-friendly, data-driven change highlights. Never animate fake data.
   const previousLiveValues = new Map();
   function writeLive(id, content, numeric = NaN) {
@@ -289,6 +315,7 @@
       if (s.seenTrades.has(tradeId)) continue;
       s.seenTrades.add(tradeId);
       if (s.seenTrades.size > 3000) s.seenTrades = new Set(Array.from(s.seenTrades).slice(-1500));
+      if (Math.abs(Date.now() - time) < 30000) recordTick('oil', px, 'trade', time);
       // A trade must be fresh AND later than the currently displayed quote;
       // public trades that arrived before we published the quote never fill it.
       if (!s.running || !readyToTrade() || Date.now() - time > 7000 ||
@@ -353,10 +380,12 @@
     $('obi-value').textContent = bidQty + askQty > 0 ? fmt((bidQty - askQty) / (bidQty + askQty) * 100, 1) + '% OBI' : '—';
     renderLiveInputBoard();
   }
-  function updatePrice(price) {
+  function updatePrice(price, source = 'snapshot', eventTime = Date.now()) {
     if (!(Number.isFinite(price) && price > 0)) return;
     s.price = price;
     s.lastFeed = Date.now();
+    if (source !== 'snapshot') recordTick('oil', price, source, eventTime);
+    else if (!s.ticks.oil.length) recordTick('oil', price, 'snapshot', eventTime);
     writeLive('price', '$' + fmt(price, 3), price);
     $('last-update').textContent = 'Last tick ' + utc(Date.now()) + ' UTC';
     if (s.prevDay > 0) {
@@ -370,7 +399,7 @@
     if (candle && now >= candle.t && now < candle.t + ms) {
       candle.c = price; candle.h = Math.max(candle.h, price); candle.l = Math.min(candle.l, price);
     }
-    snapshotEquity(); renderSummary(); computeQuotes(); drawPrice(); drawEquity();
+    snapshotEquity(); renderSummary(); computeQuotes(); scheduleTickRedraw(); drawEquity();
   }
   function renderHormuz() {
     const p = s.poly;
@@ -469,38 +498,65 @@
       return response.json();
     } finally { clearTimeout(timeout); }
   }
-  function onRateBook(data) {
-    const levels = data?.levels;
-    const bid = nnum(levels?.[0]?.[0]?.px), ask = nnum(levels?.[1]?.[0]?.px);
-    if (!(bid > 0 && ask >= bid)) return;
-    const mid = (bid + ask) / 2;
+  function acceptRatePrice(mid, source, eventTime = Date.now(), bid = NaN, ask = NaN) {
+    if (!(Number.isFinite(mid) && mid > 0)) return;
     const now = Date.now();
-    s.rate.bid = bid; s.rate.ask = ask; s.rate.value = mid; s.rate.lastAt = now;
+    s.rate.value = mid; s.rate.lastAt = now; s.rate.source = source;
+    if (Number.isFinite(bid) && Number.isFinite(ask) && ask >= bid) {
+      s.rate.bid = bid; s.rate.ask = ask; s.rate.bookAt = now;
+    }
     const records = s.rate.observations;
-    // Only record genuinely changed quotes as a new economic observation.
-    if (!records.length || records.at(-1).v !== mid) records.push({ t: now, v: mid });
+    if (!records.length || records.at(-1).v !== mid) records.push({t: now, v: mid});
     while (records.length > 1 && records[0].t < now - RATES.WINDOW_MS) records.shift();
     if (records.length > 900) records.splice(0, records.length - 900);
     const model = RATES.rateSignal(records, now);
     s.rate.deltaBps = model.deltaBps; s.rate.score = model.score;
+    recordTick('rate', mid, source, eventTime);
     writeLive('price-proxy', fmt(mid, 4) + '%', mid);
-    $('para-status').textContent = 'Live U.S. 10Y yield · bid ' + fmt(bid, 4) + '% / ask ' + fmt(ask, 4) + '% · ' + utc(now) + ' UTC';
-    $('rate-feed-label').textContent = '10Y tick ' + utc(now) + ' UTC';
-    updateStartAvailability(); computeQuotes(); drawPrice();
+    $('para-status').textContent = '10Y ' + source + ' · ' + fmt(mid, 4) + '% · ' + utc(now) + ' UTC';
+    $('rate-feed-label').textContent = '10Y ' + source + ' · ' + utc(now) + ' UTC';
+    updateStartAvailability(); computeQuotes(); scheduleTickRedraw();
+  }
+  function onRateBook(data, source = 'book') {
+    const levels = data?.levels;
+    const bid = nnum(levels?.[0]?.[0]?.px), ask = nnum(levels?.[1]?.[0]?.px);
+    if (!(bid > 0 && ask >= bid)) return false;
+    acceptRatePrice((bid + ask) / 2, source, data?.time, bid, ask);
+    return true;
+  }
+  function onRateTrades(trades) {
+    if (!Array.isArray(trades)) return;
+    for (const trade of trades) {
+      if (trade?.coin !== RATE_MARKET) continue;
+      const px = nnum(trade.px), t = nnum(trade.time);
+      if (!(px > 0) || !Number.isFinite(t) || Math.abs(Date.now() - t) > 30000) continue;
+      // Trades are real exchange events. Avoid replacing a fresh bid/ask midpoint
+      // with a last trade price unless the order book has gone silent.
+      if (Date.now() - (s.rate.bookAt || 0) > 12000) acceptRatePrice(px, 'trade', t);
+      else recordTick('rate', px, 'trade', t);
+    }
   }
   async function fetchTenY() {
-    // A periodic safety fallback; one-second redraw does NOT mean one-second HTTP polling.
-    // WebSocket l2Book is the primary low-latency source of genuine quote events.
-    if (Date.now() - s.rate.lastAt < 12000) return;
+    // Book and trade WebSocket are primary. HTTP snapshots are fallbacks, never 1s polling.
+    if (Date.now() - s.rate.lastAt < 15000) return;
     try {
       const result = await info({ type: 'l2Book', coin: RATE_MARKET });
-      onRateBook(result);
-    } catch (err) {
-      if (!rateReady()) {
-        $('para-status').textContent = '10Y quote unavailable or stale; paper trading blocked';
-        $('rate-feed-label').textContent = '10Y feed stale';
-      }
-      console.warn('Public 10Y yield unavailable:', String(err?.message || err));
+      if (onRateBook(result, 'book snapshot')) return;
+    } catch (err) { console.info('10Y book unavailable:', String(err.message || err)); }
+    try {
+      // Some HIP-3 contracts have sparse books. The per-dex public asset context
+      // can still expose an indicative midpoint or mark.
+      const result = await info({ type: 'metaAndAssetCtxs', dex: 'para' });
+      const universe = result?.[0]?.universe || [];
+      const i = universe.findIndex(m => m.name === RATE_MARKET || m.name === '10Y');
+      const ctx = i >= 0 ? result?.[1]?.[i] : null;
+      const px = nnum(ctx?.midPx || ctx?.markPx);
+      if (px > 0) { acceptRatePrice(px, 'context snapshot'); return; }
+    } catch (err) { console.info('10Y context unavailable:', String(err.message || err)); }
+    if (!rateReady()) {
+      $('para-status').textContent = '10Y unavailable — no synthetic data';
+      $('rate-feed-label').textContent = '10Y: waiting for public market data';
+      const warning = $('rate-data-warning'); if (warning) warning.textContent = '10Y feed unavailable: blue line needs genuine public events';
     }
   }
   async function fetchContext() {
@@ -548,7 +604,7 @@
       const ws = new WebSocket(WS_URL); s.ws = ws;
       ws.onopen = () => {
         s.reconnectAttempts = 0;
-        for (const subscription of [{ type: 'l2Book', coin: MARKET }, { type: 'trades', coin: MARKET }, { type: 'allMids', dex: DEX }, { type: 'l2Book', coin: RATE_MARKET }]) {
+        for (const subscription of [{ type: 'l2Book', coin: MARKET }, { type: 'trades', coin: MARKET }, { type: 'allMids', dex: DEX }, { type: 'l2Book', coin: RATE_MARKET }, { type: 'trades', coin: RATE_MARKET }, { type: 'allMids', dex: 'para' }]) {
           ws.send(JSON.stringify({ method: 'subscribe', subscription }));
         }
       };
@@ -560,7 +616,7 @@
           if (bid > 0 && ask >= bid) {
             s.orderbook = [bids, asks]; s.bestBid = bid; s.bestAsk = ask; s.lastBook = Date.now();
             if (!s.connected) { s.connected = true; setConnection('LIVE'); s.reconnectAttempts = 0; }
-            updatePrice((bid + ask) / 2); renderBook();
+            updatePrice((bid + ask) / 2, 'book', msg.data.time); renderBook();
             updateStartAvailability();
           }
         }
@@ -568,9 +624,16 @@
         if (msg.channel === 'allMids') {
           const mids = msg.data?.mids;
           const px = nnum(mids?.[MARKET] ?? mids?.CL);
-          if (px > 0) updatePrice(px);
+          // allMids for para may share the socket. Only apply oil mids after the
+          // WTI book has established an actual WTI market connection.
+          if (px > 0 && s.connected) updatePrice(px, 'mid');
+          const y = nnum(mids?.[RATE_MARKET] ?? mids?.['10Y']);
+          if (y > 0 && Date.now() - (s.rate.bookAt || 0) > 15000)
+            acceptRatePrice(y, 'mid stream');
         }
-        if (msg.channel === 'trades') onTrades(msg.data);
+        if (msg.channel === 'trades') { onTrades(msg.data); onRateTrades(msg.data); }
+        if (msg.channel === 'subscriptionResponse' && msg.data?.error)
+          console.warn('Hyperliquid subscription:', msg.data.error);
       };
       ws.onerror = () => { /* Close event handles retry and user notice. */ };
       ws.onclose = () => {
@@ -594,142 +657,127 @@
     const ctx = canvas.getContext('2d'); ctx.scale(dpr, dpr);
     return { ctx, w: rect.width, h: rect.height };
   }
-  const CHART_WINDOWS = { '1m': 60_000, '5m': 300_000, '15m': 900_000, '1h': 3_600_000 };
+  const CHART_WINDOWS = { '10s':10000, '30s':30000, '1m':60000, '5m':300000, '15m':900000, '1h':3600000 };
   let lastChartView = null;
   function sampleChart() {
-    // Every second records the newest ACTUAL observed quote, with original event
-    // timestamps. Unchanged quotes are explicitly held, not invented ticks.
-    const now = Date.now();
-    const freshOil = marketReady() && Date.now()-s.lastFeed < 30000;
-    const freshYield = rateReady();
+    // Paired snapshots for exploratory correlation only; NEVER plot these as ticks.
+    const now=Date.now(), freshOil=marketReady()&&now-s.lastFeed<30000, freshYield=rateReady();
     if (!freshOil && !freshYield) return;
-    const obs = { t: now, oil: freshOil ? mark() : NaN,
-      yield: freshYield ? s.rate.value : NaN,
-      oilAt: freshOil ? s.lastFeed : 0, yieldAt: freshYield ? s.rate.lastAt : 0 };
-    s.chartSamples.push(obs);
-    while (s.chartSamples.length > 3600) s.chartSamples.shift();
-    $('chart-empty').classList.add('hidden');
+    s.chartSamples.push({t:now,oil:freshOil?mark():NaN,yield:freshYield?s.rate.value:NaN,
+      oilAt:freshOil?s.lastFeed:0,yieldAt:freshYield?s.rate.lastAt:0});
+    while(s.chartSamples.length>3600)s.chartSamples.shift();
   }
   function chartTimeLabel(t) {
-    return new Date(t).toLocaleTimeString('en-GB', {timeZone:'UTC', hour12:false});
+    return new Date(t).toLocaleTimeString('en-GB', {timeZone:'UTC',hour12:false});
   }
   function setupChartHover() {
-    const canvas = $('price-chart');
+    const canvas=$('price-chart');
     function move(clientX) {
       if (!lastChartView?.data?.length) return;
-      const box = canvas.getBoundingClientRect();
-      const x = clientX - box.left;
-      const v = lastChartView;
-      const target = v.start + clamp((x-v.left)/v.width, 0, 1)*(v.end-v.start);
-      let chosen = v.data[0]; let d = Infinity;
-      for (const point of v.data) { const nd = Math.abs(point.t-target); if (nd<d) { chosen=point; d=nd; } }
-      s.chartHover = chosen.t;
-      drawPrice();
+      const box=canvas.getBoundingClientRect(), v=lastChartView;
+      const target=v.start+clamp((clientX-box.left-v.left)/v.width,0,1)*(v.end-v.start);
+      let chosen=v.data[0], best=Math.abs(chosen.t-target);
+      for(const item of v.data) {const d=Math.abs(item.t-target);if(d<best){best=d;chosen=item;}}
+      s.chartHover=chosen.t;drawPrice();
     }
-    canvas.addEventListener('pointermove', ev => move(ev.clientX));
-    canvas.addEventListener('pointerleave', () => { s.chartHover = -1; $('chart-hover-tooltip').classList.add('hidden'); drawPrice(); });
-    canvas.addEventListener('focus', () => {
-      if (lastChartView?.data?.length) { s.chartHover = lastChartView.data.at(-1).t; drawPrice(); }
-    });
-    canvas.addEventListener('blur', () => { s.chartHover = -1; $('chart-hover-tooltip').classList.add('hidden'); drawPrice(); });
-    canvas.addEventListener('keydown', ev => {
-      if (!['ArrowLeft','ArrowRight','Escape'].includes(ev.key)) return;
+    canvas.addEventListener('pointermove', ev=>move(ev.clientX));
+    canvas.addEventListener('pointerleave',()=>{s.chartHover=-1;$('chart-hover-tooltip').classList.add('hidden');drawPrice();});
+    canvas.addEventListener('focus',()=>{if(lastChartView?.data?.length){s.chartHover=lastChartView.data.at(-1).t;drawPrice();}});
+    canvas.addEventListener('blur',()=>{s.chartHover=-1;$('chart-hover-tooltip').classList.add('hidden');drawPrice();});
+    canvas.addEventListener('keydown',ev=>{
+      if(!['ArrowLeft','ArrowRight','Escape'].includes(ev.key))return;
       ev.preventDefault();
-      if (ev.key === 'Escape') { s.chartHover = -1; $('chart-hover-tooltip').classList.add('hidden'); drawPrice(); return; }
-      const pts = lastChartView?.data || []; if (!pts.length) return;
-      const currentIndex = pts.findIndex(x => x.t === s.chartHover);
-      const index = currentIndex < 0 ? pts.length-1 : clamp(currentIndex + (ev.key==='ArrowLeft'?-1:1),0,pts.length-1);
-      s.chartHover = pts[index].t; drawPrice();
+      if(ev.key==='Escape'){s.chartHover=-1;$('chart-hover-tooltip').classList.add('hidden');drawPrice();return;}
+      const pts=lastChartView?.data||[];if(!pts.length)return;
+      const i=pts.findIndex(x=>x.t===s.chartHover);
+      s.chartHover=pts[i<0?pts.length-1:clamp(i+(ev.key==='ArrowLeft'?-1:1),0,pts.length-1)].t;drawPrice();
     });
   }
   function drawPrice() {
-    const frame = setupCanvas('price-chart'); if (!frame) return;
-    const { ctx, w, h } = frame;
-    const left=74, right=79, top=46, bottom=45;
-    const width=Math.max(50,w-left-right), height=Math.max(50,h-top-bottom);
-    const end=Date.now(), span=CHART_WINDOWS[s.interval] || 300000, start=end-span;
-    const live=s.chartSamples.filter(x=>x.t>=start && x.t<=end);
-    const oilPoints=[...s.historyOil.filter(x=>x.t>=start&&x.t<=end).map(x=>({t:x.t,oil:x.v})),
-       ...live.filter(x=>Number.isFinite(x.oil)).map(x=>({t:x.t,oil:x.oil}))].sort((a,b)=>a.t-b.t);
-    const yieldPoints=[...s.historyYield.filter(x=>x.t>=start&&x.t<=end).map(x=>({t:x.t,yield:x.v})),
-       ...live.filter(x=>Number.isFinite(x.yield)).map(x=>({t:x.t,yield:x.yield}))].sort((a,b)=>a.t-b.t);
-    // Aligned tooltip inputs: as-of last genuine quote at or before each timestamp.
-    const times=[...new Set([...oilPoints.map(x=>x.t),...yieldPoints.map(x=>x.t)])].sort((a,b)=>a-b);
+    const frame=setupCanvas('price-chart');if(!frame)return;
+    const {ctx,w,h}=frame, left=71,right=76,top=44,bottom=40;
+    const width=Math.max(50,w-left-right),height=Math.max(50,h-top-bottom);
+    const end=Date.now(),span=CHART_WINDOWS[s.interval]||30000,start=end-span;
+    const fine=span<=60000;
+    // Short windows: ONLY real tick/book/trade WS events. Never 1m candles.
+    const fromTicks=(kind)=>s.ticks[kind].filter(x=>x.t>=start&&x.t<=end)
+      .map(x=>({t:x.t,v:x.v,source:x.source}))
+      .sort((a,b)=>a.t-b.t);
+    const oilTicks=fromTicks('oil'),rateTicks=fromTicks('rate');
+    const fromHistory=(history)=>history.filter(x=>x.t>=start&&x.t<=end).map(x=>({t:x.t,v:x.v,source:'1m candle'}));
+    const oilPoints=(fine?oilTicks:[...fromHistory(s.historyOil),...oilTicks].sort((a,b)=>a.t-b.t));
+    const ratePoints=(fine?rateTicks:[...fromHistory(s.historyYield),...rateTicks].sort((a,b)=>a.t-b.t));
+    // Keep drawing fast under heavy tick traffic; preserve the last point.
+    const thin=(items)=>items.length>2200?items.filter((_,i)=>i%(Math.ceil(items.length/2200))===0||i===items.length-1):items;
+    const oil=thin(oilPoints),rates=thin(ratePoints);
+    const times=[...new Set([...oil.map(x=>x.t),...rates.map(x=>x.t)])].sort((a,b)=>a-b);
     let oi=-1,ri=-1;
     const data=times.map(t=>{
-      while(oi+1<oilPoints.length&&oilPoints[oi+1].t<=t) oi++;
-      while(ri+1<yieldPoints.length&&yieldPoints[ri+1].t<=t) ri++;
-      return {t,oil:oi>=0?oilPoints[oi].oil:NaN,yield:ri>=0?yieldPoints[ri].yield:NaN};
+      while(oi+1<oil.length&&oil[oi+1].t<=t)oi++;
+      while(ri+1<rates.length&&rates[ri+1].t<=t)ri++;
+      return {t,oil:oi>=0?oil[oi].v:NaN,yield:ri>=0?rates[ri].v:NaN,
+        oilSource:oi>=0?oil[oi].source:'',rateSource:ri>=0?rates[ri].source:''};
     });
     lastChartView={data,left,width,start,end};
-    const oil=oilPoints, rates=yieldPoints;
-    const oilValues=oil.map(x=>x.oil), yieldValues=rates.map(x=>x.yield);
-    function scale(vals, fallback, minPad) {
-      let lo=vals.length?Math.min(...vals):fallback, hi=vals.length?Math.max(...vals):fallback;
-      const pad=Math.max((hi-lo)*.22, minPad);
+    function scale(pts,fallback,pad0) {
+      const vals=pts.map(x=>x.v);
+      const lo=vals.length?Math.min(...vals):fallback,hi=vals.length?Math.max(...vals):fallback;
+      const pad=Math.max((hi-lo)*.23,pad0);
       return {lo:lo-pad,hi:hi+pad,y:v=>top+(hi+pad-v)/(hi-lo+2*pad)*height};
     }
-    const oilAxis=scale(oilValues,mark() || 70,Math.max(.02,(mark()||70)*.0002));
-    const rateAxis=scale(yieldValues,s.rate.value || 4.5,.002);
+    const oilAxis=scale(oil,mark()||70,Math.max(.012,(mark()||70)*.0001));
+    const rateAxis=scale(rates,s.rate.value||4.5,.001);
     const X=t=>left+clamp((t-start)/span,0,1)*width;
     ctx.font='11px ui-monospace, monospace';
-    for(let i=0;i<=5;i++) {
+    for(let i=0;i<=5;i++){
       const y=top+height*i/5;
-      ctx.strokeStyle='rgba(43,105,167,.16)';ctx.lineWidth=1;
+      ctx.strokeStyle='rgba(45,95,139,.13)';ctx.lineWidth=1;
       ctx.beginPath();ctx.moveTo(left,y);ctx.lineTo(left+width,y);ctx.stroke();
-      const ov=oilAxis.hi+(oilAxis.lo-oilAxis.hi)*i/5;
-      const rv=rateAxis.hi+(rateAxis.lo-rateAxis.hi)*i/5;
-      ctx.textAlign='right';ctx.fillStyle='#a63148';ctx.fillText('$'+fmt(ov,2),left-7,y+4);
-      ctx.textAlign='left';ctx.fillStyle='#185eab';ctx.fillText(fmt(rv,3)+'%',left+width+8,y+4);
+      ctx.textAlign='right';ctx.fillStyle='#aa364b';ctx.fillText('$'+fmt(oilAxis.hi+(oilAxis.lo-oilAxis.hi)*i/5,2),left-6,y+4);
+      ctx.textAlign='left';ctx.fillStyle='#226bb1';ctx.fillText(fmt(rateAxis.hi+(rateAxis.lo-rateAxis.hi)*i/5,3)+'%',left+width+7,y+4);
     }
-    for(let i=0;i<=5;i++) {
+    for(let i=0;i<=5;i++){
       const x=left+width*i/5;
-      ctx.strokeStyle='rgba(43,105,167,.1)';ctx.beginPath();ctx.moveTo(x,top);ctx.lineTo(x,top+height);ctx.stroke();
-      ctx.textAlign='center';ctx.fillStyle='#58718a';
-      ctx.fillText(chartTimeLabel(start+span*i/5).slice(0,5),x,top+height+22);
+      ctx.strokeStyle='rgba(45,95,139,.10)';ctx.beginPath();ctx.moveTo(x,top);ctx.lineTo(x,top+height);ctx.stroke();
+      ctx.textAlign='center';ctx.fillStyle='#52687d';
+      const time=chartTimeLabel(start+span*i/5);
+      ctx.fillText(span<=300000?time:time.slice(0,5),x,top+height+21);
     }
-    function trace(points, field, scaleFn, color) {
-      if (!points.length) return null;
-      ctx.beginPath();
-      for(let i=0;i<points.length;i++) {const x=X(points[i].t),y=scaleFn(points[i][field]);if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);}
-      ctx.lineCap='round';ctx.lineJoin='round';
-      ctx.strokeStyle=color==='oil'?'rgba(195,55,82,.12)':'rgba(26,104,185,.12)';ctx.lineWidth=7;ctx.stroke();
-      ctx.strokeStyle=color==='oil'?'#c74252':'#1c73c4';ctx.lineWidth=2.9;ctx.stroke();
-      const last=points.at(-1), x=X(last.t), y=scaleFn(last[field]);
-      ctx.fillStyle=color==='oil'?'#c74252':'#1c73c4';ctx.beginPath();ctx.arc(x,y,4.6,0,Math.PI*2);ctx.fill();
-      ctx.strokeStyle='#fff9ed';ctx.lineWidth=1.6;ctx.stroke();
+    function trace(points,axis,color){
+      if(!points.length)return null;
+      ctx.beginPath();points.forEach((p,i)=>{const x=X(p.t),y=axis.y(p.v);if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);});
+      ctx.lineJoin='round';ctx.lineCap='round';ctx.strokeStyle=color;ctx.lineWidth=2.3;ctx.stroke();
+      const last=points.at(-1),x=X(last.t),y=axis.y(last.v);
+      ctx.fillStyle=color;ctx.beginPath();ctx.arc(x,y,4.3,0,Math.PI*2);ctx.fill();
       return {x,y,last};
     }
-    const oilEnd=trace(oil,'oil',oilAxis.y,'oil');
-    const yieldEnd=trace(rates,'yield',rateAxis.y,'rate');
-    function cursor(id, point, valid) {
-      const el=$(id);
-      if(point && valid) {
-        el.style.left=(point.x-122)+'px';el.style.top=(point.y-14)+'px';
-        el.classList.remove('hidden');
-      } else el.classList.add('hidden');
+    const oilEnd=trace(oil,oilAxis,'#bd3b52'),rateEnd=trace(rates,rateAxis,'#1771b9');
+    function cursor(id,point,ok){
+      const el=$(id);if(point&&ok){el.style.left=(point.x-122)+'px';el.style.top=(point.y-14)+'px';el.classList.remove('hidden');}
+      else el.classList.add('hidden');
     }
     cursor('pencil-cursor',oilEnd,marketReady());
-    cursor('rate-pencil-cursor',yieldEnd,rateReady());
-    $('chart-pencil-live').textContent='✎ One-second redraw · red WTI ($) · blue 10Y (%) · only real quotes change';
+    cursor('rate-pencil-cursor',rateEnd,rateReady());
+    const status=$('rate-data-warning');
+    if(status) {
+      if(rates.length) status.textContent='';
+      else status.textContent='10Y: no observations in this window · waiting for real ticks';
+    }
+    $('chart-pencil-live').textContent=`${fine?'EVENT TICKS':'1M HISTORY + TICKS'} · red WTI / blue 10Y`;
     $('chart-start').textContent=chartTimeLabel(start)+' UTC';
     $('chart-end').textContent=chartTimeLabel(end)+' UTC';
-    // Tooltips and crosshair use the exact recorded sampled quote and its event timestamp.
     const tooltip=$('chart-hover-tooltip');
-    const closest=s.chartHover>=0&&data.length ? data.reduce((best,p)=>Math.abs(p.t-s.chartHover)<Math.abs(best.t-s.chartHover)?p:best,data[0]) : null;
-    if(closest) {
+    const closest=s.chartHover>=0&&data.length?data.reduce((best,p)=>Math.abs(p.t-s.chartHover)<Math.abs(best.t-s.chartHover)?p:best,data[0]):null;
+    if(closest){
       const x=X(closest.t);
-      ctx.setLineDash([4,5]);ctx.strokeStyle='rgba(18,55,84,.5)';ctx.lineWidth=1;
-      ctx.beginPath();ctx.moveTo(x,top);ctx.lineTo(x,top+height);ctx.stroke();ctx.setLineDash([]);
-      for(const [field,axis,color] of [['oil',oilAxis,'#c74252'],['yield',rateAxis,'#1c73c4']]) {
-        if (!Number.isFinite(closest[field])) continue;
-        ctx.fillStyle=color;ctx.beginPath();ctx.arc(x,axis.y(closest[field]),5,0,Math.PI*2);ctx.fill();
+      ctx.setLineDash([3,4]);ctx.strokeStyle='rgba(18,55,84,.48)';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(x,top);ctx.lineTo(x,top+height);ctx.stroke();ctx.setLineDash([]);
+      for(const [val,axis,color] of [[closest.oil,oilAxis,'#bd3b52'],[closest.yield,rateAxis,'#1771b9']]){
+        if(!Number.isFinite(val))continue;
+        ctx.fillStyle=color;ctx.beginPath();ctx.arc(x,axis.y(val),4.5,0,Math.PI*2);ctx.fill();
       }
-      tooltip.textContent=`${chartTimeLabel(closest.t)} UTC · WTI: ${Number.isFinite(closest.oil)?'$'+fmt(closest.oil,3):'—'} · 10Y: ${Number.isFinite(closest.yield)?fmt(closest.yield,4)+'%':'—'} · last observed at/as-of time`;
-      tooltip.style.left=clamp(x-120,8,w-265)+'px';
-      tooltip.style.top=Math.max(8,top-31)+'px';
-      tooltip.classList.remove('hidden');
-    } else tooltip.classList.add('hidden');
+      tooltip.textContent=`${chartTimeLabel(closest.t)} UTC | WTI ${Number.isFinite(closest.oil)?'$'+fmt(closest.oil,3):'—'} (${closest.oilSource||'—'}) | 10Y ${Number.isFinite(closest.yield)?fmt(closest.yield,4)+'%':'—'} (${closest.rateSource||'—'})`;
+      tooltip.style.left=clamp(x-125,7,Math.max(7,w-270))+'px';tooltip.style.top=Math.max(8,top-32)+'px';tooltip.classList.remove('hidden');
+    }else tooltip.classList.add('hidden');
     $('chart-empty').classList.toggle('hidden',data.length>0);
   }
   function drawEquity() {

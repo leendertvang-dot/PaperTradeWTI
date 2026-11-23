@@ -8,17 +8,17 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' https://api.hyperliquid.xyz wss://api.hyperliquid.xyz https://gamma-api.polymarket.com; img-src 'self' data:; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; form-action 'none'" />
   <title>CrudeEdge · Handwritten Quant Notebook • Live Paper Trading</title>
   <link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
-  <link rel="stylesheet" href="styles.css" />
-  <script src="hormuz-signal.js" defer></script>
-  <script src="rates-model.js" defer></script>
-  <script src="app.js" defer></script>
+  <link rel="stylesheet" href="styles.css?v=16" />
+  <script src="hormuz-signal.js?v=16" defer></script>
+  <script src="rates-model.js?v=16" defer></script>
+  <script src="app.js?v=16" defer></script>
 </head>
 <body>
   <div class="page-wrap">
     <header class="notebook-topbar">
       <a href="#overview" class="brand brand-inline" data-nav="overview">
         <span class="brand-mark">∫</span>
-        <span class="brand-copy">PaperTradeWTI <small>Notebook edition / v1.5</small></span>
+        <span class="brand-copy">PaperTradeWTI <small>Notebook / v1.6</small></span>
       </a>
       <nav class="tabbar nav-links" aria-label="Primary navigation">
         <a href="#overview" class="nav-link active" data-nav="overview">Trading Dashboard</a>
@@ -35,21 +35,11 @@
     <main class="main" id="overview">
       <section class="hero-grid">
         <div class="hero-copy panel paper-hero">
-          <div class="eyebrow-line">LIVE INPUTS → SIGNAL → QUOTES → PAPER FILLS</div>
-          <h1>Live markets. <span>Pencil-drawn logic.</span></h1>
-          <p>
-            Live Hyperliquid market data, live Hormuz and US 10-year yield inputs, and simulated bid/ask quotes that are
-            <strong>directly changed by the incoming data streams</strong>. This is a public paper-trading terminal — no private keys, no wallet, no real orders.
-          </p>
-          <div class="hero-badges">
-            <span class="scribble-badge">Hand-drawn market trace</span>
-            <span class="scribble-badge">Dynamic quote engine</span>
-            <span class="scribble-badge">Public data only</span>
-          </div>
+          <div class="eyebrow-line">WTI / 10Y · HORMUZ · PAPER</div>
+          <h1>Quant notebook</h1>
+          <p>Live market ticks, quote model and paper account.</p>
         </div>
         <div class="hero-actions panel control-panel">
-          <div class="handdrawn-arrow" aria-hidden="true">↘</div>
-          <div class="sticky-note">Inputs are <strong>not research only</strong> — they actively influence quote skew and quote distance.</div>
           <button id="start-btn" class="btn-primary" disabled><span class="play-icon">▶</span> Start Paper Trading</button>
           <button id="stop-btn" class="btn-outline hidden">Ⅱ Pause Trading</button>
           <small id="start-requirement" class="start-requirement">Waiting for Hyperliquid and Polymarket market feeds</small>
@@ -58,7 +48,7 @@
 
       <div class="notice panel notice-panel">
         <span class="notice-icon">ⓘ</span>
-        <span><strong>Paper environment.</strong> Public prices come from Hyperliquid <code>xyz:CL</code>. The interface also shows a <strong>Hyperliquid para:10Y proxy component</strong> for monitoring context, while the live WTI quotes and virtual fills use the public WTI book, Hormuz probabilities and a tunable nominal US 10-year yield signal.</span>
+        <span><strong>Public market feeds. Paper orders only.</strong> WTI / 10Y / Hormuz.</span>
         <button id="dismiss-notice" aria-label="Dismiss note">×</button>
       </div>
 
@@ -67,28 +57,30 @@
           <section class="panel chart-panel" id="market">
             <div class="section-head">
               <div>
-                <div class="panel-eyebrow">LIVE CHARTING PAGE</div>
-                <h2>WTI curve notebook</h2>
+                <div class="panel-eyebrow">MARKET DATA</div>
+                <h2>WTI / 10Y — tick chart</h2>
               </div>
               <div class="head-side">
                 <span class="live-chip" id="chart-label">LIVE FEED</span>
                 <select id="chart-interval" class="thin-select" aria-label="Chart timeframe">
-                  <option value="1m">Last 1 minute</option>
-                  <option value="5m" selected>Last 5 minutes</option>
-                  <option value="15m">Last 15 minutes</option>
-                  <option value="1h">Last 60 minutes</option>
+                  <option value="10s">Tick view · 10s</option>
+                  <option value="30s">Tick view · 30s</option>
+                  <option value="1m">Tick view · 1m</option>
+                  <option value="5m" selected>5m + live ticks</option>
+                  <option value="15m">15m + history</option>
+                  <option value="1h">1h + history</option>
                 </select>
               </div>
             </div>
             <div class="chart-header-row">
               <div>
-                <div class="market-title-line">WTI Crude Oil + U.S. 10Y Yield <span class="tag-perp">two live streams</span></div>
-                <div class="tiny-meta" id="chart-symbol">WTI / USD · synchronized live data · 10Y (%)</div>
-                <div class="chart-series-legend"><span class="legend-red">● WTI price · USD</span><span class="legend-blue">● U.S. 10Y yield · %</span><span id="rate-feed-label">Rate feed connecting</span></div>
+                <div class="market-title-line">WTI <span class="tag-perp">red · USD</span> / 10Y <span class="tag-perp">blue · %</span></div>
+                <div class="tiny-meta" id="chart-symbol">WebSocket events · live</div>
+                <div class="chart-series-legend"><span class="legend-red">● WTI / USD</span><span class="legend-blue">● 10Y / %</span><span id="rate-feed-label">10Y connecting</span></div>
               </div>
               <div class="live-price-cluster">
                 <div class="live-big"><span id="price">—</span> <span id="change" class="market-change">—</span></div>
-                <div class="live-subtext"><span class="pulse-dot"></span><span id="last-update">Waiting for market feed</span></div>
+                <div class="live-subtext"><span class="pulse-dot"></span><span id="oil-tick-age">WTI awaiting ticks</span><span id="last-update">Waiting for WTI</span></div>
               </div>
             </div>
             <div class="chart-stage">
@@ -111,14 +103,15 @@
                   <path d="M114 11 L122 14 L114 17 Z" fill="#273344"/>
                 </svg>
               </div>
-              <div id="chart-pencil-live" class="chart-pencil-live">✎ Red WTI + blue 10Y: redraw every second, data changes only on genuine market ticks</div>
+              <div id="chart-pencil-live" class="chart-pencil-live">EVENT TICKS · NO INTERPOLATION</div>
+              <div id="rate-data-warning" class="rate-data-warning" role="status">10Y: connecting</div>
               <div id="chart-hover-tooltip" class="chart-hover-tooltip hidden" role="status" aria-live="off"></div>
               <canvas id="price-chart" role="img" tabindex="0" aria-label="WTI crude oil price and U.S. 10-year Treasury yield chart. Hover or use arrow keys to inspect timestamped prices."></canvas>
               <div class="chart-empty" id="chart-empty">Connecting to Hyperliquid market data…</div>
             </div>
             <div class="chart-axis-note">
               <span id="chart-start">—</span>
-              <span>1-second redraw · genuine 1m candle history + live quote samples · separate USD / % axes</span>
+              <span><span id="tick-count-oil">0 events</span> WTI · <span id="tick-count-rate">0 events</span> 10Y</span>
               <span id="chart-end">—</span>
             </div>
           </section>
@@ -127,7 +120,7 @@
             <div class="section-head">
               <div>
                 <div class="panel-eyebrow">FORMULA BREAKDOWN</div>
-                <h2>Live input breakdown</h2>
+                <h2>Inputs / evaluated formula</h2>
               </div>
               <div class="head-side dual-status">
                 <span id="poly-status" class="status-pill offline"><i></i> CONNECTING</span>
@@ -168,8 +161,8 @@
                 <div class="math-paper-head">
                   <div>
                     <span class="handnote math-tag">✎ model derivation</span>
-                    <h3 id="math-heading">The formula, then the live numbers</h3>
-                    <p>Symbols above. Their exact current values directly beneath. No look-ahead or invented market ticks.</p>
+                    <h3 id="math-heading">Formula / live substitution</h3>
+                    <p>Symbols / live values</p>
                   </div>
                   <div class="math-head-state"><span class="math-stamp" id="math-tick">WAITING FOR INPUTS</span><strong id="poly-model-value" class="math-model-readout">OFFLINE</strong></div>
                 </div>
@@ -319,7 +312,7 @@
             <div class="rate-weight-control">
               <label for="rate-weight">Nominal 10Y signal weight <strong id="rate-weight-display">20%</strong></label>
               <input id="rate-weight" type="range" min="0" max="40" step="5" value="20" aria-label="10Y yield share of blended paper quote signal, percent" />
-              <small>20% = illustrative conservative starting setting, <b>not</b> a coefficient from a scientific paper. Hormuz receives the remaining 80%. Max 40%.</small>
+              <small>Exploratory weight, not an estimated coefficient.</small>
             </div>
             <div class="controls-grid">
               <label>Base notional per side (USD)
@@ -438,14 +431,14 @@
             <div class="monitor-row"><span>Private keys / wallet</span><strong>Not present</strong></div>
           </div>
           <p class="model-copy">
-            The original Python execution/ML engine is not running inside this public GitHub version. The nominal U.S. 10Y signal and Hormuz probability <strong>both directly alter</strong> virtual quote skew and distance. This 20% interest weighting is hypothetical, not statistically optimized or backtested.
+            10Y + Hormuz enter the quote equation. Weights are illustrative, not fitted.
           </p>
           <div class="api-footnote">Public endpoints in this app: <span class="mono">https://api.hyperliquid.xyz/info</span> · <span class="mono">wss://api.hyperliquid.xyz/ws</span> · <span class="mono">https://gamma-api.polymarket.com</span></div>
         </article>
       </section>
 
       <footer class="footer-note">
-        <span>© <span id="year"></span> CrudeEdge / Handwritten Quant Notebook v1.4</span>
+        <span>© <span id="year"></span> CrudeEdge / Quant Notebook v1.6</span>
         <span>No wallet · no secrets · no real orders</span>
       </footer>
     </main>
